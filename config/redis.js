@@ -1,15 +1,30 @@
-// redis.js
 const Redis = require('ioredis');
+const dns = require('dns');
 
-const redis = new Redis(process.env.REDIS_URL || {
-  host: process.env.REDIS_HOST,
-  port: Number(process.env.REDIS_PORT),
+// Ép ưu tiên IPv4 (tránh lỗi IPv6 trên một số host)
+dns.setDefaultResultOrder?.('ipv4first');
 
-  // Quan trọng để không block app khi Redis chết:
-  lazyConnect: true,          // không auto connect khi require
-  enableReadyCheck: false,    // khỏi chờ INFO/ROLE
-  maxRetriesPerRequest: 0,    // tránh promise bị giữ vô hạn
-  retryStrategy: (times) => Math.min(times * 100, 3000), // backoff nhẹ
+const host = process.env.REDIS_HOST;
+const port = Number(process.env.REDIS_PORT);
+const password = process.env.REDIS_PASSWORD;
+
+const redis = new Redis({
+  host,
+  port,
+  password,
+
+  // BẮT BUỘC với Upstash (TLS + SNI)
+  tls: { servername: host },
+
+  // Ép ioredis resolve IPv4
+  dnsLookup: (hostname, options, cb) =>
+    require('dns').lookup(hostname, { family: 4 }, cb),
+
+  // đừng để treo app
+  lazyConnect: true,
+  enableReadyCheck: false,
+  maxRetriesPerRequest: 0,
+  retryStrategy: (t) => Math.min(t * 100, 3000),
 });
 
 redis.on('connect', () => console.log('[REDIS] connect'));
@@ -18,7 +33,6 @@ redis.on('error',   (e) => console.warn('[REDIS] error:', e.message));
 redis.on('end',     () => console.warn('[REDIS] disconnected'));
 redis.on('reconnecting', () => console.log('[REDIS] reconnecting'));
 
-// Thử connect nhưng không phá app nếu fail
 redis.connect().catch(() => {
   console.warn('[REDIS] cannot connect at boot, will run with fallback');
 });
