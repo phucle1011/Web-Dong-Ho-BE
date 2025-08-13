@@ -1,18 +1,26 @@
+// redis.js
 const Redis = require('ioredis');
 
-const redis = new Redis({
-  host: 'https://web-dong-ho-be.onrender.com',
-  port: 6379,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  }
+const redis = new Redis(process.env.REDIS_URL || {
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: Number(process.env.REDIS_PORT) || 6379,
+
+  // Quan trọng để không block app khi Redis chết:
+  lazyConnect: true,          // không auto connect khi require
+  enableReadyCheck: false,    // khỏi chờ INFO/ROLE
+  maxRetriesPerRequest: 0,    // tránh promise bị giữ vô hạn
+  retryStrategy: (times) => Math.min(times * 100, 3000), // backoff nhẹ
 });
 
-redis.on('connect', () => console.log('Kết nối Redis thành công'));
-redis.on('error', err => console.error('Redis lỗi:', err));
-redis.on('ready', () => console.log('Redis ready'));
-redis.on('reconnecting', () => console.log('Redis reconnecting'));
-redis.on('end', () => console.log('Redis disconnected'));
+redis.on('connect', () => console.log('[REDIS] connect'));
+redis.on('ready',   () => console.log('[REDIS] ready'));
+redis.on('error',   (e) => console.warn('[REDIS] error:', e.message));
+redis.on('end',     () => console.warn('[REDIS] disconnected'));
+redis.on('reconnecting', () => console.log('[REDIS] reconnecting'));
+
+// Thử connect nhưng không phá app nếu fail
+redis.connect().catch(() => {
+  console.warn('[REDIS] cannot connect at boot, will run with fallback');
+});
 
 module.exports = redis;

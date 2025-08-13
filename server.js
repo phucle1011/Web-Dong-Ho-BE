@@ -121,6 +121,8 @@ app.set('io', io);
 // const runAuctionStatusJob = require('./config/middleware/auctionStatusJob');
 // runAuctionStatusJob(io);
 
-server.listen(port, () => {
-  console.log(`Server chạy tại http://localhost:${port}`);
-});
+// server.listen(port, () => {
+//   console.log(`Server chạy tại http://localhost:${port}`);
+// });
+
+server.listen()
