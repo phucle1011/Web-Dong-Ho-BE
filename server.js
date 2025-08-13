@@ -118,8 +118,8 @@ io.on('connection', (socket) => {
 // để controller dùng được io
 app.set('io', io);
 
-// const runAuctionStatusJob = require('./config/middleware/auctionStatusJob');
-// runAuctionStatusJob(io);
+const runAuctionStatusJob = require('./config/middleware/auctionStatusJob');
+runAuctionStatusJob(io);
 
 server.listen(port, () => {
   console.log(`Server chạy tại http://localhost:${port}`);
