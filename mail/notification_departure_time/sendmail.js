@@ -16,7 +16,7 @@ const transporter = nodemailer.createTransport({
 
 cron.schedule('* * * * *', async () => {
   try {
-    const response = await axios.get('http://localhost:5000/admin/booking/list');
+    const response = await axios.get('https://web-dong-ho-be.onrender.com/admin/booking/list');
     const bookings = response.data.data;
 
     const now = dayjs();
