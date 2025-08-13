@@ -19,7 +19,6 @@ const { authAdmin } = require('./services/authCheck');
 const notifyWishlistPromotions = require('./services/notifyWishlistPromotions');
 const attachUser = require('./services/attachUser');
 
-const redis = require('./config/redis');
 
 const webhookRoutes = require('./routes/webhookRoutes');
 app.use('/stripe/webhook', express.raw({type: 'application/json'}), webhookRoutes);
@@ -122,8 +121,6 @@ app.set('io', io);
 // const runAuctionStatusJob = require('./config/middleware/auctionStatusJob');
 // runAuctionStatusJob(io);
 
-// server.listen(port, () => {
-//   console.log(`Server chạy tại http://localhost:${port}`);
-// });
-
-server.listen()
+server.listen(port, () => {
+  console.log(`Server chạy tại http://localhost:${port}`);
+});
