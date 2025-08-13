@@ -1824,7 +1824,7 @@ await productVariant.save({ transaction: t });
                 console.error("Lỗi gửi email xác nhận đơn hàng:", mailErr);
             }
 
-            return res.redirect("http://localhost:3000/cart");
+            return res.redirect("https://web-dong-ho-fe.vercel.app/cart");
         } catch (error) {
             if (t && t.finished !== "commit") {
                 try {
