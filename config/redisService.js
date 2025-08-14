@@ -1,97 +1,98 @@
-// RedisService.js
 const redis = require('./redis');
-const LRU = require('lru-cache');
 
 class RedisService {
-  constructor() {
+    constructor() {
+        this.client = redis;
+        this.isConnected = false;
 
-    this.memory = new LRU({
-      max: 5000,             
-      ttl: 1000 * 60 * 5,   
-    });
+        this.client.on('connect', () => {
+            console.log('Redis connected');
+            this.isConnected = true;
+        });
+        
+        this.client.on('error', (err) => {
+            console.error('Redis error:', err);
+            this.isConnected = false;
+        });
+        
+        this.client.on('end', () => {
+            console.log('Redis disconnected');
+            this.isConnected = false;
+        });
+    }
 
-    this.redisUp = false;
+    async ensureConnection() {
+        if (!this.isConnected) {
+            try {
 
-    const markUp   = () => { this.redisUp = true; };
-    const markDown = () => { this.redisUp = false; };
-
-    redis.on('ready', markUp);
-    redis.on('connect', markUp);
-    redis.on('end', markDown);
-    redis.on('error', markDown);
-
-    this.redisUp = redis.status === 'ready';
-  }
-
-  isRedisAvailable() {
-    return this.redisUp && redis.status === 'ready';
-  }
-
-  async setData(key, value, ttl = 3600) {
-
-    this.memory.set(key, value, { ttl: ttl * 1000 });
-
-    if (this.isRedisAvailable()) {
-      try {
-        if (ttl) {
-          await redis.set(key, JSON.stringify(value), 'EX', ttl);
-        } else {
-          await redis.set(key, JSON.stringify(value));
+                if (this.client.status !== 'ready') {
+                    this.client = new Redis({
+                        host: '127.0.0.1',
+                        port: 6379,
+                        retryStrategy: (times) => {
+                            const delay = Math.min(times * 50, 2000);
+                            return delay;
+                        }
+                    });
+                }
+                this.isConnected = true;
+            } catch (err) {
+                console.error('Redis connection error:', err);
+                throw err;
+            }
         }
-      } catch (e) {
-
-        console.warn('[REDIS] set fail, used memory fallback:', e.message);
-      }
     }
-    return true;
-  }
 
-  async getData(key) {
-
-    if (this.isRedisAvailable()) {
-      try {
-        const raw = await redis.get(key);
-        if (raw !== null && raw !== undefined) {
-          return JSON.parse(raw);
+    async setData(key, value, ttl = 3600) {
+        try {
+            await this.ensureConnection();
+            
+            if (ttl) {
+                await this.client.set(key, JSON.stringify(value), 'EX', ttl);
+            } else {
+                await this.client.set(key, JSON.stringify(value));
+            }
+            return true;
+        } catch (err) {
+            console.error('Redis set error:', err);
+            return false;
         }
-      } catch (e) {
-        console.warn('[REDIS] get fail, using memory:', e.message);
-      }
     }
 
-    const v = this.memory.get(key);
-    return v === undefined ? null : v;
-  }
-
-  async deleteData(key) {
-
-    this.memory.delete(key);
-
-    if (this.isRedisAvailable()) {
-      try {
-        const n = await redis.del(key);
-        return n > 0;
-      } catch (e) {
-        console.warn('[REDIS] del fail (ignored):', e.message);
-      }
+    async getData(key) {
+        try {
+            await this.ensureConnection();
+            
+            const data = await this.client.get(key);
+            return data ? JSON.parse(data) : null;
+        } catch (err) {
+            console.error('Redis get error:', err);
+            return null;
+        }
     }
-    return true; 
-  }
 
-  async disconnect() {
-    try {
-
-      if (redis && redis.status !== 'end') {
-        await redis.quit();
-      }
-    } catch (e) {
-      console.warn('[REDIS] quit error (ignored):', e.message);
+    async deleteData(key) {
+        try {
+            await this.ensureConnection();
+            
+            const result = await this.client.del(key);
+            return result > 0;
+        } catch (err) {
+            console.error('Redis delete error:', err);
+            return false;
+        }
     }
-  }
 
-  health() {
-    return { redis: this.isRedisAvailable() ? 'up' : 'down' };
-  }
+    async disconnect() {
+        try {
+            if (this.isConnected) {
+                await this.client.quit();
+                this.isConnected = false;
+            }
+        } catch (err) {
+            console.error('Redis disconnect error:', err);
+        }
+    }
 }
 
 module.exports = new RedisService();
