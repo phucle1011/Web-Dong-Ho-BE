@@ -16,6 +16,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@mui/x-data-grid": "^8.8.0",
+    "@upstash/redis": "^1.35.3",
     "axios": "^1.9.0",
     "bcrypt": "^5.1.1",
     "bcryptjs": "^3.0.2",

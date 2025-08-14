@@ -1,71 +1,29 @@
-// redis.js
 const Redis = require('ioredis');
 const dns = require('dns');
 
-// Ép ưu tiên IPv4 (tránh sự cố IPv6 ở một số host)
+// Ép ưu tiên IPv4 để tránh lỗi IPv6
 dns.setDefaultResultOrder?.('ipv4first');
 
-const {
-  REDIS_URL,
-  REDIS_HOST,
-  REDIS_PORT,
-  REDIS_PASSWORD,
-  REDIS_TLS,
-} = process.env;
+const host = 'learning-walrus-33071.upstash.io';
+const port = 6379;
+const password = 'AYEvAAIncDFkZjBhZGE2NDNlYTU0MmVkODg3NGUwNDFlNmU0YTI4Y3AxMzMwNzE'; // từ trang Upstash
 
-// Parse boolean từ .env (true/1/yes)
-const toBool = (v) => /^(true|1|yes)$/i.test(String(v || ''));
-
-const baseOpts = {
-  // Kết nối ngay lúc khởi động (tránh SET khi chưa sẵn sàng)
-  lazyConnect: false,
-
-  // Cho Upstash/serverless: tắt ready check, không retry per-request
-  enableReadyCheck: false,
-  maxRetriesPerRequest: 0,
-
-  // Backoff reconnect
-  retryStrategy: (times) => Math.min(times * 200, 3000),
-
-  // Ép IPv4 để tránh lỗi IPv6
+const redis = new Redis({
+  host,
+  port,
+  password,
+  tls: { servername: host }, // bắt buộc với Upstash
   dnsLookup: (hostname, options, cb) =>
     require('dns').lookup(hostname, { family: 4 }, cb),
-
-  // Một số lỗi nên reconnect
-  reconnectOnError: (err) => {
-    return ['READONLY', 'ECONNRESET'].some(x => err.message?.includes(x));
-  },
-};
-
-// Chỉ dùng REDIS_URL khi là rediss:// (TLS). Không chấp nhận https:// (REST).
-const useUrl = REDIS_URL && /^rediss:\/\//i.test(REDIS_URL);
-
-let client;
-
-if (useUrl) {
-  // VD: rediss://default:<TOKEN>@learning-walrus-33071.upstash.io:6379
-  client = new Redis(REDIS_URL, baseOpts);
-} else {
-  client = new Redis({
-    host: REDIS_HOST,
-    port: Number(REDIS_PORT || 6379),
-    username: 'default', // BẮT BUỘC với Upstash
-    password: REDIS_PASSWORD || undefined,
-    tls: toBool(REDIS_TLS) ? { servername: REDIS_HOST } : undefined,
-    ...baseOpts,
-  });
-}
-
-client.on('connect',       () => console.log('[REDIS] connect'));
-client.on('ready',         () => console.log('[REDIS] ready'));
-client.on('reconnecting',  () => console.log('[REDIS] reconnecting'));
-client.on('end',           () => console.log('[REDIS] end'));
-client.on('error', (e) => {
-  console.error('[REDIS] error:', {
-    message: e.message,
-    code: e.code,
-    name: e.name,
-  });
+  lazyConnect: true,
+  enableReadyCheck: false,
+  maxRetriesPerRequest: 0,
+  retryStrategy: (times) => Math.min(times * 100, 3000),
 });
 
-module.exports = client;
+redis.on('connect', () => console.log('[REDIS] Connected'));
+redis.on('ready', () => console.log('[REDIS] Ready'));
+redis.on('error', (err) => console.error('[REDIS] Error:', err));
+redis.on('end', () => console.log('[REDIS] Disconnected'));
+
+module.exports = redis;
