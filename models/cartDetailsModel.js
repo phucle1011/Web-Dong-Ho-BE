@@ -13,7 +13,8 @@ const CartDetail = connection.define('cart_details', {
     },
     product_variant_id: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: false,
+        unique: 'uniq_cart_variant'
     },
     quantity: {
         type: DataTypes.INTEGER,
@@ -25,14 +26,6 @@ const CartDetail = connection.define('cart_details', {
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
-    hooks: {
-        beforeCreate: (cart, options) => {
-            cart.total_price = cart.quantity * cart.price;
-        },
-        beforeUpdate: (cart, options) => {
-            cart.total_price = cart.quantity * cart.price;
-        }
-    }
 });
 
 module.exports = CartDetail;

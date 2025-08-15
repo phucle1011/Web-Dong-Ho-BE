@@ -47,36 +47,27 @@ module.exports = (io) => {
         lock: t.LOCK.UPDATE,
       });
 
-      const allBids = await AuctionBidModel.findAll({
-        where: { auction_id: auction.id },
-        order: [
-          ['bidAmount', 'DESC'],
-          ['created_at', 'ASC'],
-        ],
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
 
-      if (allBids.length > 0) {
-        for (const bid of allBids) {
-          const baseTime = bid.bidTime
-            ? new Date(bid.bidTime)
-            : (bid.created_at ? new Date(bid.created_at) : new Date());
-          const expireAt = new Date(baseTime.getTime() + 5 * 60 * 1000);
+      if (topBid) {
+        await CartDetail.destroy({
+          where: { product_variant_id: auction.product_variant_id },
+          transaction: t,
+        });
 
+        try {
           await CartDetail.create({
-            user_id: bid.user_id,
+            user_id: topBid.user_id,
             product_variant_id: auction.product_variant_id,
             quantity: 1,
-            expire_at: expireAt
           }, { transaction: t });
+        } catch (err) {
+          if (err.name !== 'SequelizeUniqueConstraintError') throw err;
         }
 
-        auction.current_price = allBids[0].bidAmount;
+        auction.current_price = topBid.bidAmount;
         auction.status = 'ended';
         await auction.save({ transaction: t });
       } else {
-
         auction.status = 'ended';
         await auction.save({ transaction: t });
       }
@@ -132,7 +123,7 @@ module.exports = (io) => {
       });
       const userName = user.name || 'Quý khách';
       const productName = auction.variant?.product?.name || 'sản phẩm';
-      const sku = auction.variant?.psku || '';
+      const sku = auction.variant?.sku || '';
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
