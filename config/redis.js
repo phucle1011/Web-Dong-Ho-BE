@@ -1,13 +1,10 @@
-// redis.js
 const Redis = require('ioredis');
 const dns = require('dns');
-
-// Ưu tiên IPv4 (tránh một số host resolve IPv6 lỗi)
 dns.setDefaultResultOrder?.('ipv4first');
 
-const host = process.env.REDIS_HOST;     // learning-walrus-33071.upstash.io
+const host = process.env.REDIS_HOST;
 const port = Number(process.env.REDIS_PORT || 6379);
-const password = process.env.REDIS_PASSWORD; // lấy từ Upstash
+const password = process.env.REDIS_PASSWORD;
 
 const redis = new Redis({
   host,
@@ -17,13 +14,11 @@ const redis = new Redis({
   dnsLookup: (hostname, options, cb) =>
     require('dns').lookup(hostname, { family: 4 }, cb),
 
-  lazyConnect: true,
+  // Kết nối ngay khi app boot
+  lazyConnect: false,
   enableReadyCheck: false,
-
-  // QUAN TRỌNG: cho phép ioredis retry không giới hạn mức lệnh
   maxRetriesPerRequest: 0,
   retryStrategy: (times) => Math.min(times * 200, 3000),
-
   reconnectOnError: (err) => {
     const msg = (err?.message || '').toLowerCase();
     return msg.includes('readonly') || msg.includes('noauth') || msg.includes('tls');

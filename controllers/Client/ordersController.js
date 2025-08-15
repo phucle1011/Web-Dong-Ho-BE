@@ -1438,9 +1438,11 @@ await productVariant.save({ transaction: t });
 
             const saved = await RedisService.setData(redisKey, extraData, 86400);
 
-            if (!saved) {
-                throw new Error("Không thể lưu dữ liệu đơn hàng vào Redis");
-            }
+           if (!saved) {
+  console.error('[VNPAY] Redis SET failed:', redisKey);
+  return res.status(500).json({ success: false, message: 'Không thể lưu dữ liệu đơn hàng vào Redis' });
+}
+console.log('[VNPAY] Redis SET ok:', redisKey, 'returnUrl=', returnUrl);
 
             const minimalOrderInfo = {
                 orderId,
@@ -1508,6 +1510,8 @@ await productVariant.save({ transaction: t });
 
     static async handleVNPayCallback(req, res) {
         console.log('[VNPAY] callback HIT', req.method, req.originalUrl, req.query?.vnp_TxnRef);
+
+        let t;
         try {
             const vnpParams = req.query;
 
@@ -1557,19 +1561,26 @@ await productVariant.save({ transaction: t });
                 );
             }
 
-            const decoded = await RedisService.getData(minimalInfo.redisKey);
-            console.log("Decoded order data:", decoded);
-            console.log("FRONTEND_URL order data:", FRONTEND_URL);
-            
-            if (!decoded) {
-                console.error("Không tìm thấy dữ liệu đơn hàng trong Redis");
-                return res.redirect(
-                    `${process.env.FRONTEND_URL}/payment/failed?error=Order_data_expired&orderId=${orderId}`
-                );
+              console.log("[VNPAY] GET redisKey:", minimalInfo.redisKey); // log key
+            let decoded = await RedisService.getData(minimalInfo.redisKey); // dùng let để có thể gán lại
+            // Fallback: nếu key trong orderInfo lệch TxnRef thì thử key theo TxnRef
+           if (!decoded) {
+              const altKey = `order:${orderId}`;
+              if (altKey !== minimalInfo.redisKey) {
+                console.warn("[VNPAY] primary key miss -> try altKey:", altKey);
+               decoded = await RedisService.getData(altKey);
+                if (decoded) minimalInfo.redisKey = altKey;
+              }
             }
-            await RedisService.deleteData(minimalInfo.redisKey);
+            // console.log("FRONTEND_URL:", process.env.FRONTEND_URL); // nếu cần log env
+            if (!decoded) {
+                 console.error("Không tìm thấy dữ liệu đơn hàng trong Redis");
+                 return res.redirect(
+                     `${process.env.FRONTEND_URL}/payment/failed?error=Order_data_expired&orderId=${orderId}`
+                 );
+                }
 
- const t = await sequelize.transaction();
+t = await sequelize.transaction();
 
             const {
                 user_id,
@@ -1828,6 +1839,13 @@ await productVariant.save({ transaction: t });
             } catch (mailErr) {
                 console.error("Lỗi gửi email xác nhận đơn hàng:", mailErr);
             }
+
+             try {
+              await RedisService.deleteData(minimalInfo.redisKey);
+              console.log('[VNPAY] Redis DEL ok:', minimalInfo.redisKey);
+            } catch (e) {
+              console.error('[VNPAY] Redis DEL failed:', e.message);
+          }
 
             return res.redirect("https://web-dong-ho-fe-git-main-phucle.vercel.app/cart");
         } catch (error) {

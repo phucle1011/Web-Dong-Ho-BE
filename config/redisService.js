@@ -26,20 +26,24 @@ class RedisService {
     }
   }
 
-  async setData(key, value, ttl = 3600) {
+async setData(key, value, ttl = 3600) {
+  const payload = JSON.stringify(value);
+  for (let i = 0; i < 3; i++) {
     try {
       await this.ensureConnection();
       if (ttl) {
-        await this.client.set(key, JSON.stringify(value), 'EX', ttl);
+        await this.client.set(key, payload, 'EX', ttl);
       } else {
-        await this.client.set(key, JSON.stringify(value));
+        await this.client.set(key, payload);
       }
       return true;
     } catch (err) {
-      console.error('[REDIS] set error:', err?.message || err);
-      return false;
+      console.error(`[REDIS] set attempt ${i+1} failed:`, err.message);
+      await new Promise(r => setTimeout(r, 400 * (i + 1)));
     }
   }
+  return false;
+}
 
   async getData(key) {
     try {

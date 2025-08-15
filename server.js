@@ -121,6 +121,17 @@ app.set('io', io);
 const runAuctionStatusJob = require('./config/middleware/auctionStatusJob');
 runAuctionStatusJob(io);
 
+const redis = require('./config/redis');
+
+(async () => {
+  try {
+    await redis.ping();
+    console.log('[REDIS] boot ok');
+  } catch (e) {
+    console.error('[REDIS] boot connect failed:', e.message);
+  }
+})();
+
 server.listen(port, () => {
   console.log(`Server chạy tại http://localhost:${port}`);
 });
