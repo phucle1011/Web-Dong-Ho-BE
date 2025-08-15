@@ -14,16 +14,16 @@ const redis = new Redis({
   dnsLookup: (hostname, options, cb) =>
     require('dns').lookup(hostname, { family: 4 }, cb),
 
-  // Kết nối ngay khi app boot
   lazyConnect: false,
   enableReadyCheck: false,
   maxRetriesPerRequest: 0,
   retryStrategy: (times) => Math.min(times * 200, 3000),
+  connectTimeout: 3000,  
+ keepAlive: 30000, 
   reconnectOnError: (err) => {
     const msg = (err?.message || '').toLowerCase();
     return msg.includes('readonly') || msg.includes('noauth') || msg.includes('tls');
   },
-  keepAlive: 0,
 });
 
 redis.on('connect', () => console.log('[REDIS] connect'));
