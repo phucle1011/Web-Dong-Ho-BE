@@ -2,7 +2,6 @@ const AuctionBidModel = require("../../models/auctionBidsModel");
 const AuctionsModel = require("../../models/auctionsModel");
 const ProductVariantsModel = require("../../models/productVariantsModel");
 
-// Dùng Map để lưu thời gian đặt giá gần nhất theo auction_id
 const auctionCooldownMap = new Map();
 
 class AuctionBidController {
@@ -16,7 +15,6 @@ class AuctionBidController {
 
       const now = Date.now();
 
-      // Kiểm tra nếu phiên đấu giá đang trong thời gian chờ
       const lastBidTime = auctionCooldownMap.get(auction_id);
       if (lastBidTime && now - lastBidTime < 60 * 1000) {
         const secondsLeft = Math.ceil((60 * 1000 - (now - lastBidTime)) / 1000);
@@ -62,8 +60,6 @@ class AuctionBidController {
         bidAmount,
         bidTime: new Date(),
       });
-
-      // ✅ Cập nhật thời gian đặt giá gần nhất
       auctionCooldownMap.set(auction_id, now);
 
       return res.status(201).json({
