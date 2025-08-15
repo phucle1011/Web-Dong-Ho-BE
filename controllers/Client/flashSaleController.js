@@ -1,7 +1,7 @@
 const NotificationModel = require("../../models/notificationsModel");
 const OrderDetail = require("../../models/orderDetailsModel");
 const Comment = require("../../models/commentsModel");
-const FlashSaleModel = require("../../models/FlashSaleModel");
+const Notification_promotionsModel = require("../../models/FlashSaleModel");
 const PromotionModel = require("../../models/promotionsModel");
 const PromotionProductModel = require("../../models/promotionProductsModel");
 const VariantImagesModel = require("../../models/variantImagesModel");
@@ -35,8 +35,8 @@ static async getAll(req, res) {
       ],
       include: [
         {
-          model: FlashSaleModel,
-          as: "flashSale",
+          model: Notification_promotionsModel,
+          as: "notification_promotions",
           required: false,
           include: [
             {
@@ -71,15 +71,15 @@ static async getDiscountedProductsByNotificationId(req, res) {
       return res.status(400).json({ message: "Thiếu notification_id" });
     }
 
-    const flashSales = await FlashSaleModel.findAll({
+    const notificationPromotions = await Notification_promotionsModel.findAll({
       where: { notification_id: notificationId },
     });
 
-    if (!flashSales || flashSales.length === 0) {
+    if (!notificationPromotions || notificationPromotions.length === 0) {
       return res.status(404).json({ message: "Không tìm thấy Flash Sale nào" });
     }
 
-    const promotionIds = flashSales.map(fs => fs.promotion_id);
+    const promotionIds = notificationPromotions.map(fs => fs.promotion_id);
 
     const promotionWhere = {
       status: "active",
@@ -93,10 +93,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
         {
           model: Product,
           as: "product",
-          where: {
-            status: 1,
-            publication_status: "published",
-          },
+          where: { status: 1, publication_status: "published" },
           attributes: ["id", "name", "thumbnail", "createdAt"],
         },
         {
@@ -107,6 +104,13 @@ static async getDiscountedProductsByNotificationId(req, res) {
         {
           model: PromotionProductModel,
           as: "promotionProducts",
+          required: true,
+          where: {
+            [Op.or]: [
+              { variant_quantity: null },
+              { variant_quantity: { [Op.gt]: 0 } },
+            ],
+          },
           include: [
             {
               model: PromotionModel,
@@ -114,39 +118,39 @@ static async getDiscountedProductsByNotificationId(req, res) {
               where: promotionWhere,
               required: true,
               attributes: [
-                "id", "name", "discount_type", "discount_value", "start_date", "end_date"
+                "id", "name", "discount_type", "discount_value",
+                "start_date", "end_date", "max_price", "quantity"
               ],
             },
           ],
         },
       ],
-      where: {
-        "$promotionProducts.promotion.id$": { [Op.ne]: null },
-      },
     });
 
     const variantIds = discountedVariants.map(v => v.id);
 
     // ✅ Lấy dữ liệu đánh giá
-    const ratingData = await Comment.findAll({
-      where: { parent_id: null },
-      include: [
-        {
-          model: OrderDetail,
-          as: "orderDetail",
-          attributes: ["product_variant_id"],
-          where: { product_variant_id: { [Op.in]: variantIds } },
-          required: true,
-        },
-      ],
-      attributes: [
-        [col("orderDetail.product_variant_id"), "variantId"],
-        [fn("AVG", col("rating")), "avgRating"],
-        [fn("COUNT", col("rating")), "ratingCount"],
-      ],
-      group: ["orderDetail.product_variant_id"],
-      raw: true,
-    });
+    const ratingData = variantIds.length
+      ? await Comment.findAll({
+          where: { parent_id: null },
+          include: [
+            {
+              model: OrderDetail,
+              as: "orderDetail",
+              attributes: ["product_variant_id"],
+              where: { product_variant_id: { [Op.in]: variantIds } },
+              required: true,
+            },
+          ],
+          attributes: [
+            [col("orderDetail.product_variant_id"), "variantId"],
+            [fn("AVG", col("rating")), "avgRating"],
+            [fn("COUNT", col("rating")), "ratingCount"],
+          ],
+          group: ["orderDetail.product_variant_id"],
+          raw: true,
+        })
+      : [];
 
     const ratingMap = {};
     for (const item of ratingData) {
@@ -163,22 +167,30 @@ static async getDiscountedProductsByNotificationId(req, res) {
       const product = variant.product;
       if (!product) continue;
 
-      const variantPrice = parseFloat(variant.price);
+      const variantPrice = parseFloat(variant.price) || 0;
 
-      const bestPromotion = variant.promotionProducts.reduce((best, pp) => {
+      const bestPromotion = (variant.promotionProducts || []).reduce((best, pp) => {
         const promo = pp.promotion;
-        let finalPrice = variantPrice;
-        let percent = 0;
+        if (!promo) return best;
+
+        const cap = promo.max_price != null
+          ? Math.max(0, parseFloat(promo.max_price) || 0)
+          : null;
+
+        let discountAmount = 0;
 
         if (promo.discount_type === "percentage") {
-          finalPrice -= (variantPrice * parseFloat(promo.discount_value)) / 100;
-          percent = parseFloat(promo.discount_value);
+          const pct = Math.max(0, Math.min(100, parseFloat(promo.discount_value) || 0));
+          const raw = variantPrice * (pct / 100);
+          discountAmount = cap != null ? Math.min(raw, cap) : raw;
         } else if (promo.discount_type === "fixed") {
-          finalPrice -= parseFloat(promo.discount_value);
-          percent = ((variantPrice - finalPrice) / variantPrice) * 100;
+          const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
+          const raw = Math.min(fixed, variantPrice);
+          discountAmount = cap != null ? Math.min(raw, cap) : raw;
         }
 
-        finalPrice = Math.max(0, finalPrice);
+        const finalPrice = Math.max(0, variantPrice - discountAmount);
+        const percent = variantPrice > 0 ? (discountAmount / variantPrice) * 100 : 0;
 
         const info = {
           id: promo.id,
@@ -234,6 +246,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
     return res.status(500).json({ message: "Lỗi server khi xử lý yêu cầu" });
   }
 }
+
 
 
 

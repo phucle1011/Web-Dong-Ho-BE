@@ -1,7 +1,7 @@
 const connection = require('../config/database');
 const { DataTypes } = require('sequelize');
 
-const FlashSaleModel = connection.define('flash_sale', {
+const Notification_promotionsModel = connection.define('notification_promotions', {
   id: {
     type: DataTypes.INTEGER,
     autoIncrement: true,
@@ -28,8 +28,8 @@ const FlashSaleModel = connection.define('flash_sale', {
     onUpdate: 'CASCADE'
   }
 }, {
-  tableName: 'flash_sale',
+  tableName: 'notification_promotions',
   timestamps: false
 });
 
-module.exports = FlashSaleModel;
+module.exports = Notification_promotionsModel;

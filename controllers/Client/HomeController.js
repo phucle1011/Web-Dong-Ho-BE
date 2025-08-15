@@ -123,44 +123,50 @@ static async getAllNewProducts(req, res) {
       variants.forEach(v => {
         const price = parseFloat(v.price) || 0;
 
-        const best = (v.promotionProducts || []).reduce((best, pp) => {
-          const promo = pp.promotion;
-          if (!promo) return best;
+       const best = (v.promotionProducts || []).reduce((best, pp) => {
+  const promo = pp.promotion;
+  if (!promo) return best;
 
-          const cap = promo.max_price != null
-            ? Math.max(0, parseFloat(promo.max_price) || 0)
-            : null;
+  // ✅ Bỏ qua nếu variant_quantity = 0
+  if (pp.variant_quantity !== null && pp.variant_quantity <= 0) {
+    return best;
+  }
 
-          let discountAmount = 0;
+  const cap = promo.max_price != null
+    ? Math.max(0, parseFloat(promo.max_price) || 0)
+    : null;
 
-          if (promo.discount_type === 'percentage') {
-            const pct = Math.max(0, Math.min(100, parseFloat(promo.discount_value) || 0));
-            const raw = price * (pct / 100);
-            discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
-          } else if (promo.discount_type === 'fixed') {
-            const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
-            const raw = Math.min(fixed, price); // không trừ quá giá gốc
-            discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
-          }
+  let discountAmount = 0;
 
-          const finalPrice = Math.max(0, price - discountAmount);
-          const percent = price > 0 ? (discountAmount / price) * 100 : 0;
+  if (promo.discount_type === 'percentage') {
+    const pct = Math.max(0, Math.min(100, parseFloat(promo.discount_value) || 0));
+    const raw = price * (pct / 100);
+    discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
+  } else if (promo.discount_type === 'fixed') {
+    const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
+    const raw = Math.min(fixed, price); // không trừ quá giá gốc
+    discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
+  }
 
-          const info = {
-            id: promo.id,
-            code: promo.code,
-            discount_type: promo.discount_type,
-            discount_value: parseFloat(promo.discount_value) || 0,
-            discounted_price: parseFloat(finalPrice.toFixed(2)),
-            discount_percent: parseFloat(percent.toFixed(2)),
-            meets_conditions: promo.quantity == null || promo.quantity > 0,
-          };
+  const finalPrice = Math.max(0, price - discountAmount);
+  const percent = price > 0 ? (discountAmount / price) * 100 : 0;
 
-          if (!best || (info.meets_conditions && info.discounted_price < best.discounted_price)) {
-            return info;
-          }
-          return best;
-        }, null);
+  const info = {
+    id: promo.id,
+    code: promo.code,
+    discount_type: promo.discount_type,
+    discount_value: parseFloat(promo.discount_value) || 0,
+    discounted_price: parseFloat(finalPrice.toFixed(2)),
+    discount_percent: parseFloat(percent.toFixed(2)),
+    meets_conditions: promo.quantity == null || promo.quantity > 0,
+  };
+
+  if (!best || (info.meets_conditions && info.discounted_price < best.discounted_price)) {
+    return info;
+  }
+  return best;
+}, null);
+
 
         v.promotion = best || {
           discounted_price: price,
@@ -284,10 +290,9 @@ static async getTopSoldProducts(req, res) {
                         start_date: { [Op.lte]: now },
                         end_date: { [Op.gte]: now },
                       },
-                      // 👇 Lấy thêm max_price để làm trần giảm
                       attributes: [
-                        'id','code','name','discount_type','discount_value',
-                        'quantity','start_date','end_date','status','max_price'
+                        'id', 'code', 'name', 'discount_type', 'discount_value',
+                        'quantity', 'start_date', 'end_date', 'status', 'max_price'
                       ],
                     },
                   ],
@@ -344,6 +349,11 @@ static async getTopSoldProducts(req, res) {
             const promo = pp.promotion;
             if (!promo) return best;
 
+            // ✅ Bỏ qua nếu variant_quantity = 0
+            if (pp.variant_quantity !== null && pp.variant_quantity <= 0) {
+              return best;
+            }
+
             const cap = promo.max_price != null
               ? Math.max(0, parseFloat(promo.max_price) || 0)
               : null;
@@ -356,7 +366,7 @@ static async getTopSoldProducts(req, res) {
               discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
             } else if (promo.discount_type === 'fixed') {
               const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
-              const raw = Math.min(fixed, price); // không vượt quá giá gốc
+              const raw = Math.min(fixed, price);
               discountAmount = (cap != null) ? Math.min(raw, cap) : raw;
             }
 
@@ -408,6 +418,7 @@ static async getTopSoldProducts(req, res) {
 
 
 
+
 static async getDiscountedProducts(req, res) {
   try {
     const now = new Date();
@@ -420,7 +431,6 @@ static async getDiscountedProducts(req, res) {
           where: { status: 1, publication_status: 'published' },
           attributes: ['id', 'name', 'thumbnail', 'createdAt'],
           include: [
-            // 🔒 Bắt buộc category active
             {
               model: Category,
               as: 'category',
@@ -428,7 +438,6 @@ static async getDiscountedProducts(req, res) {
               where: { status: 'active' },
               required: true,
             },
-            // 🔒 Bắt buộc brand active
             {
               model: Brand,
               as: 'brand',
@@ -439,9 +448,18 @@ static async getDiscountedProducts(req, res) {
           ],
         },
         { model: VariantImagesModel, as: 'images', attributes: ['id', 'image_url'] },
+
+        // ✅ Chỉ lấy các promo còn lượt ở cấp biến thể (null hoặc > 0)
         {
           model: PromotionProductModel,
           as: 'promotionProducts',
+          required: true,
+          where: {
+            [Op.or]: [
+              { variant_quantity: null },
+              { variant_quantity: { [Op.gt]: 0 } },
+            ],
+          },
           include: [
             {
               model: PromotionModel,
@@ -452,38 +470,41 @@ static async getDiscountedProducts(req, res) {
                 end_date: { [Op.gte]: now },
               },
               required: true,
-              // 👇 LẤY THÊM max_price (mức GIẢM tối đa)
-              attributes: ['id', 'name', 'discount_type', 'discount_value', 'start_date', 'end_date', 'max_price'],
+              attributes: [
+                'id', 'name', 'code', 'discount_type', 'discount_value',
+                'start_date', 'end_date', 'max_price', 'quantity'
+              ],
             },
           ],
         },
       ],
-      where: {
-        '$promotionProducts.promotion.id$': { [Op.ne]: null },
-      },
+      // Có required:true ở trên nên không cần điều kiện này nữa
+      // where: { '$promotionProducts.promotion.id$': { [Op.ne]: null } },
     });
 
     // Rating cho các variant
     const variantIds = discountedVariants.map(v => v.id);
-    const ratingData = await Comment.findAll({
-      where: { parent_id: null },
-      include: [
-        {
-          model: OrderDetail,
-          as: 'orderDetail',
-          attributes: ['product_variant_id'],
-          where: { product_variant_id: { [Op.in]: variantIds } },
-          required: true,
-        },
-      ],
-      attributes: [
-        [col('orderDetail.product_variant_id'), 'variantId'],
-        [fn('AVG', col('rating')), 'avgRating'],
-        [fn('COUNT', col('rating')), 'ratingCount'],
-      ],
-      group: ['orderDetail.product_variant_id'],
-      raw: true,
-    });
+    const ratingData = variantIds.length
+      ? await Comment.findAll({
+          where: { parent_id: null },
+          include: [
+            {
+              model: OrderDetail,
+              as: 'orderDetail',
+              attributes: ['product_variant_id'],
+              where: { product_variant_id: { [Op.in]: variantIds } },
+              required: true,
+            },
+          ],
+          attributes: [
+            [col('orderDetail.product_variant_id'), 'variantId'],
+            [fn('AVG', col('rating')), 'avgRating'],
+            [fn('COUNT', col('rating')), 'ratingCount'],
+          ],
+          group: ['orderDetail.product_variant_id'],
+          raw: true,
+        })
+      : [];
 
     const ratingMap = {};
     for (const item of ratingData) {
@@ -493,32 +514,33 @@ static async getDiscountedProducts(req, res) {
       };
     }
 
-    // Gom nhóm theo product + tính promo (áp dụng cap max_price cho % và fixed)
+    // Gom theo product + chọn promo tốt nhất (áp dụng trần max_price)
     const productMap = new Map();
 
     for (const variant of discountedVariants) {
       const product = variant.product;
       if (!product) continue;
 
-      const variantPrice = parseFloat(variant.price);
+      const variantPrice = parseFloat(variant.price) || 0;
 
       const bestPromotion = (variant.promotionProducts || []).reduce((best, pp) => {
         const promo = pp.promotion;
         if (!promo) return best;
 
-        const cap = promo.max_price != null ? Math.max(0, parseFloat(promo.max_price) || 0) : null;
+        const cap = promo.max_price != null
+          ? Math.max(0, parseFloat(promo.max_price) || 0)
+          : null;
 
         let discountAmount = 0;
 
         if (promo.discount_type === 'percentage') {
-          // % hợp lệ 0..100
           const pct = Math.max(0, Math.min(100, parseFloat(promo.discount_value) || 0));
-          const raw = variantPrice * (pct / 100);                  // số tiền giảm theo %
-          discountAmount = cap != null ? Math.min(raw, cap) : raw; // chặn theo max_price nếu có
+          const raw = variantPrice * (pct / 100);
+          discountAmount = cap != null ? Math.min(raw, cap) : raw;
         } else if (promo.discount_type === 'fixed') {
           const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
-          const raw = Math.min(fixed, variantPrice);                // không giảm quá giá gốc
-          discountAmount = cap != null ? Math.min(raw, cap) : raw;  // chặn theo max_price nếu có
+          const raw = Math.min(fixed, variantPrice); // không giảm quá giá gốc
+          discountAmount = cap != null ? Math.min(raw, cap) : raw;
         }
 
         const finalPrice = Math.max(0, variantPrice - discountAmount);
@@ -526,21 +548,29 @@ static async getDiscountedProducts(req, res) {
 
         const info = {
           id: promo.id,
+          code: promo.code,
           name: promo.name,
           discount_type: promo.discount_type,
           discount_value: parseFloat(promo.discount_value),
           discounted_price: parseFloat(finalPrice.toFixed(2)),
           discount_percent: parseFloat(percent.toFixed(2)),
+          meets_conditions: promo.quantity == null || promo.quantity > 0,
         };
 
-        if (!best || info.discounted_price < best.discounted_price) return info;
+        if (!best || (info.meets_conditions && info.discounted_price < best.discounted_price)) {
+          return info;
+        }
         return best;
       }, null);
 
       const variantJson = variant.toJSON();
+      const lowest = bestPromotion?.discounted_price ?? variantPrice;
+      const percent = bestPromotion?.discount_percent ?? 0;
+
       variantJson.promotion = bestPromotion || {
-        discounted_price: variantPrice,
-        discount_percent: 0,
+        discounted_price: lowest,
+        discount_percent: percent,
+        meets_conditions: true,
       };
 
       // Gắn rating

@@ -19,7 +19,7 @@ const Promotion = require('../models/promotionsModel');
 const CommentImageModel = require('../models/commentImagesModel');
 const PromotionUserModel = require('./promotionUsersModel');
 const BlogModel = require('../models/blogsModel');
-const FlashSaleModel = require('./FlashSaleModel');
+const Notification_promotionsModel = require('./FlashSaleModel');
 const WithdrawRequestsModel = require('../models/withdrawRequestsModel');
 const BlogCategory = require('../models/blogsCategoryModel');
 const AuctionsModel = require('../models/auctionsModel');
@@ -163,27 +163,27 @@ PromotionProductModel.hasMany(OrderDetailModel, {
 
 
 // Notification hasMany FlashSales
-NotificationModel.hasMany(FlashSaleModel, {
+NotificationModel.hasMany(Notification_promotionsModel, {
   foreignKey: 'notification_id',
-  as: 'flashSale'
+  as: 'notification_promotions'
 });
 
 // FlashSale belongsTo Notification
-FlashSaleModel.belongsTo(NotificationModel, {
+Notification_promotionsModel.belongsTo(NotificationModel, {
   foreignKey: 'notification_id',
   as: 'notification'
 });
 
 // FlashSale belongsTo Promotion
-FlashSaleModel.belongsTo(PromotionModel, {
+Notification_promotionsModel.belongsTo(PromotionModel, {
   foreignKey: 'promotion_id',
   as: 'promotion'
 });
 
 // Promotion hasOne FlashSale (nếu cần)
-PromotionModel.hasOne(FlashSaleModel, {
+PromotionModel.hasOne(Notification_promotionsModel, {
   foreignKey: 'promotion_id',
-  as: 'flashSale'
+  as: 'notification_promotions'
 });
 
 /* --------- User - WithdrawRequests --------- */
@@ -256,7 +256,7 @@ module.exports = {
   ProductVariantAttributeValueModel,
   VariantImageModel,
   CommentImageModel,
-  FlashSaleModel,
+  Notification_promotionsModel,
   WithdrawRequestsModel,
   BlogCategory,
   AuctionBidModel,

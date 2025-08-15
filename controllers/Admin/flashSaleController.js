@@ -1,5 +1,5 @@
 const NotificationModel = require("../../models/notificationsModel");
-const FlashSaleModel = require("../../models/FlashSaleModel");
+const Notifications_promotionsModel = require("../../models/FlashSaleModel");
 const PromotionModel = require("../../models/promotionsModel");
 const PromotionProductModel = require("../../models/promotionProductsModel");
 
@@ -20,8 +20,8 @@ class FlashSaleController {
         where: whereClause,
         include: [
           {
-            model: FlashSaleModel,
-            as: "flashSale",
+            model: Notifications_promotionsModel,
+            as: "notification_promotions",
             include: [{ model: PromotionModel, as: "promotion", required: true }]
           }
         ],
@@ -45,14 +45,14 @@ class FlashSaleController {
     }
   }
 
-  // ✅ Lấy danh sách các promotion chưa gắn FlashSale
+  // ✅ Lấy danh sách các promotion chưa gắn notification_promotions
   static async getActiveProductPromotions(req, res) {
     try {
       const promotions = await PromotionModel.findAll({
         where: {
           applicable_to: "product",
           status: ["active", "upcoming"],
-          "$flashSale.id$": null
+          "$notification_promotions.id$": null
         },
         attributes: {
           include: [
@@ -61,7 +61,7 @@ class FlashSaleController {
         },
         include: [
           { model: PromotionProductModel, as: "promotionProducts", attributes: [] },
-          { model: FlashSaleModel, as: "flashSale", required: false, attributes: [] }
+          { model: Notifications_promotionsModel, as: "notification_promotions", required: false, attributes: [] }
         ],
         group: ["Promotion.id"],
         order: [["created_at", "DESC"]]
@@ -97,25 +97,25 @@ class FlashSaleController {
         end_date
       });
 
-      const createdFlashSales = [];
+      const createdNotifications_promotionss = [];
       for (const pid of validIds) {
-        const exists = await FlashSaleModel.findOne({ where: { promotion_id: pid } });
+        const exists = await Notifications_promotionsModel.findOne({ where: { promotion_id: pid } });
         if (exists) continue;
-        const flashSale = await FlashSaleModel.create({
+        const Notifications_promotions = await Notifications_promotionsModel.create({
           notification_id: notification.id,
           promotion_id: pid
         });
-        createdFlashSales.push(flashSale);
+        createdNotifications_promotionss.push(Notifications_promotions);
       }
 
-      if (!createdFlashSales.length) {
+      if (!createdNotifications_promotionss.length) {
         return res.status(409).json({
           success: false,
           message: "Tất cả chương trình đã được liên kết với Flash Sale."
         });
       }
 
-      res.status(201).json({ success: true, data: createdFlashSales });
+      res.status(201).json({ success: true, data: createdNotifications_promotionss });
     } catch (error) {
       console.error("Lỗi khi tạo flash sale:", error);
       res.status(500).json({ success: false, message: "Lỗi máy chủ" });
@@ -130,8 +130,8 @@ class FlashSaleController {
         where: { id },
         include: [
           {
-            model: FlashSaleModel,
-            as: "flashSale",
+            model: Notifications_promotionsModel,
+            as: "notification_promotions",
             include: [{ model: PromotionModel, as: "promotion" }]
           }
         ]
@@ -161,14 +161,14 @@ class FlashSaleController {
 
       await notification.update({ title, thumbnail, start_date, end_date, status });
 
-      await FlashSaleModel.destroy({ where: { notification_id: id } });
+      await Notifications_promotionsModel.destroy({ where: { notification_id: id } });
 
-      const flashSales = promotion_id.map(pid => ({
+      const Notifications_promotionss = promotion_id.map(pid => ({
         notification_id: id,
         promotion_id: pid
       }));
 
-      await FlashSaleModel.bulkCreate(flashSales);
+      await Notifications_promotionsModel.bulkCreate(Notifications_promotionss);
 
       res.status(200).json({ success: true, message: "Cập nhật thành công!" });
     } catch (error) {
@@ -190,7 +190,7 @@ class FlashSaleController {
 
     
     // 3. Sau đó xoá tất cả flash sales liên quan
-    await FlashSaleModel.destroy({ where: { notification_id: notificationId } });
+    await Notifications_promotionsModel.destroy({ where: { notification_id: notificationId } });
     // 2. Xoá notification trước
     await NotificationModel.destroy({ where: { id: notificationId } });
 

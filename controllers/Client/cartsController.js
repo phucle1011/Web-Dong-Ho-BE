@@ -132,6 +132,9 @@ class CartController {
                             limited_quantity: variantQuantityLimit,
                             discounted_quantity: quantityInCart, // nếu cần vẫn giữ
                             normal_quantity: 0,
+                            promotion_product: {
+    variant_quantity: variantQuantityLimit  // ✅ frontend cần cái này
+  }
                         };
 
 
