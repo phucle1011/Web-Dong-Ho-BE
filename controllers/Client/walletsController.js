@@ -214,7 +214,7 @@ class WalletsController {
         user_id: userId,
         amount: deducted,
         method: 'bank',
-        note: `Phí quên thanh toán đơn #${orderId}`,
+        note: `Phí quên thanh toán đơn`,
         status: 'approved',
         type: 'withdraw',
         bank_account: "",

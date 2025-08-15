@@ -194,6 +194,7 @@ router.get('/dashboard/revenue', DashboardController.getRevenueByCustomRange);
 router.get('/dashboard/order-status', DashboardController.getOrderStatusBreakdown);
 router.get('/dashboard/promo-impact', DashboardController.getPromotionImpact);
 router.get('/dashboard/top-promotions', DashboardController.getTopPromotions);
+router.get('/dashboard/best-sellers', DashboardController.getTopBestSellers);
 
 //------------------[ NOTIFICATION ]------------------\
 router.get('/notification', NotificationController.getNotifications);
