@@ -1507,7 +1507,7 @@ await productVariant.save({ transaction: t });
     }
 
     static async handleVNPayCallback(req, res) {
-        const t = await sequelize.transaction();
+        console.log('[VNPAY] callback HIT', req.method, req.originalUrl, req.query?.vnp_TxnRef);
         try {
             const vnpParams = req.query;
 
@@ -1558,6 +1558,9 @@ await productVariant.save({ transaction: t });
             }
 
             const decoded = await RedisService.getData(minimalInfo.redisKey);
+            console.log("Decoded order data:", decoded);
+            console.log("FRONTEND_URL order data:", FRONTEND_URL);
+            
             if (!decoded) {
                 console.error("Không tìm thấy dữ liệu đơn hàng trong Redis");
                 return res.redirect(
@@ -1565,6 +1568,8 @@ await productVariant.save({ transaction: t });
                 );
             }
             await RedisService.deleteData(minimalInfo.redisKey);
+
+ const t = await sequelize.transaction();
 
             const {
                 user_id,

@@ -1,29 +1,42 @@
+// redis.js
 const Redis = require('ioredis');
 const dns = require('dns');
 
-// Ép ưu tiên IPv4 để tránh lỗi IPv6
+// Ưu tiên IPv4 (tránh một số host resolve IPv6 lỗi)
 dns.setDefaultResultOrder?.('ipv4first');
 
-const host = 'learning-walrus-33071.upstash.io';
-const port = 6379;
-const password = 'AYEvAAIncDFkZjBhZGE2NDNlYTU0MmVkODg3NGUwNDFlNmU0YTI4Y3AxMzMwNzE'; // từ trang Upstash
+const host = process.env.REDIS_HOST;     // learning-walrus-33071.upstash.io
+const port = Number(process.env.REDIS_PORT || 6379);
+const password = process.env.REDIS_PASSWORD; // lấy từ Upstash
 
 const redis = new Redis({
   host,
   port,
   password,
-  tls: { servername: host }, // bắt buộc với Upstash
+  tls: { servername: host },
   dnsLookup: (hostname, options, cb) =>
     require('dns').lookup(hostname, { family: 4 }, cb),
+
   lazyConnect: true,
   enableReadyCheck: false,
+
+  // QUAN TRỌNG: cho phép ioredis retry không giới hạn mức lệnh
   maxRetriesPerRequest: 0,
-  retryStrategy: (times) => Math.min(times * 100, 3000),
+  retryStrategy: (times) => Math.min(times * 200, 3000),
+
+  reconnectOnError: (err) => {
+    const msg = (err?.message || '').toLowerCase();
+    return msg.includes('readonly') || msg.includes('noauth') || msg.includes('tls');
+  },
+  keepAlive: 0,
 });
 
-redis.on('connect', () => console.log('[REDIS] Connected'));
-redis.on('ready', () => console.log('[REDIS] Ready'));
-redis.on('error', (err) => console.error('[REDIS] Error:', err));
-redis.on('end', () => console.log('[REDIS] Disconnected'));
+redis.on('connect', () => console.log('[REDIS] connect'));
+redis.on('ready',   () => console.log('[REDIS] ready'));
+redis.on('reconnecting', () => console.log('[REDIS] reconnecting'));
+redis.on('end', () => console.log('[REDIS] end'));
+redis.on('error', (err) => {
+  console.error('[REDIS] error:', err && (err.message || err));
+});
 
 module.exports = redis;
