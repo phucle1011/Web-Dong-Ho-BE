@@ -1,6 +1,6 @@
 const CategoryModel = require('../../models/categoriesModel');
-const ProductModel = require('../../models/productsModel');
-const { Op } = require('sequelize');
+const ProductModel = require('../../models/productsModel'); // vẫn cần để ensure associations đã khai báo, nhưng không bắt buộc include
+const { Op, Sequelize } = require('sequelize');
 
 class CategoryController {
   static async getCategories(req, res) {
@@ -12,9 +12,9 @@ class CategoryController {
         status = 'active',
       } = req.query;
 
-      const currentPage = Math.max(parseInt(page, 10), 1);
-      const currentLimit = Math.max(parseInt(limit, 10), 1);
-      const offset = (currentPage - 1) * currentLimit;
+      const currentPage  = Math.max(parseInt(page, 10)  || 1, 1);
+      const currentLimit = Math.max(parseInt(limit, 10) || 10, 1);
+      const offset       = (currentPage - 1) * currentLimit;
 
       const where = {};
       if (searchTerm) {
@@ -23,51 +23,64 @@ class CategoryController {
           { slug: { [Op.like]: `%${searchTerm}%` } },
         ];
       }
-
       if (status && status !== 'all') {
         where.status = status;
       }
 
+      // Tên bảng thực tế (tránh hard-code)
+      const catTable = CategoryModel.getTableName();        // 'categories'
+      const prodTable = ProductModel.getTableName();        // 'products'
+      // Nếu bảng variant tên khác, thay 'product_variants' bên dưới cho đúng
+      const variantTable = 'product_variants';
+
+      // Điều kiện: category được giữ nếu TỒN TẠI 1 product + 1 variant "thường"
+      const existsRegularVariant = Sequelize.literal(`
+        EXISTS (
+          SELECT 1
+          FROM ${prodTable} p
+          JOIN ${variantTable} v ON v.product_id = p.id
+          WHERE p.category_id = ${catTable}.id
+            AND (v.is_auction_only = 0 OR v.is_auction_only IS NULL)
+        )
+      `);
+
       const { count, rows } = await CategoryModel.findAndCountAll({
-        where,
-        include: [
-          {
-            model: ProductModel,
-            as: 'products',
-            required: true, // ✅ chỉ lấy danh mục có ít nhất 1 sản phẩm
-            attributes: [],
-          },
-        ],
+        where: {
+          ...where,
+          [Op.and]: existsRegularVariant, // ⬅️ giữ category nếu có biến thể thường
+        },
         attributes: ['id', 'name', 'slug', 'description', 'status', 'created_at', 'updated_at'],
+        order: [['created_at', 'DESC']],
         limit: currentLimit,
         offset,
-        order: [['created_at', 'DESC']],
         distinct: true,
+        subQuery: false,
       });
 
-      const formatted = rows.map((category) => ({
-        id: category.id,
-        name: category.name,
-        slug: category.slug,
-        description: category.description || '',
-        status: category.status,
-        createdAt: category.created_at,
-        updatedAt: category.updated_at,
+      const data = rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        description: c.description || '',
+        status: c.status,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
       }));
 
-      res.status(200).json({
+      return res.status(200).json({
         status: 200,
         message: 'Lấy danh sách danh mục thành công',
-        data: formatted,
+        data,
         pagination: {
           totalPages: Math.ceil(count / currentLimit),
           currentPage,
           totalRecords: count,
+          limit: currentLimit,
         },
       });
     } catch (error) {
       console.error('Lỗi khi lấy danh sách danh mục:', error);
-      res.status(500).json({ message: 'Lỗi server', error: error.message });
+      return res.status(500).json({ message: 'Lỗi server', error: error.message });
     }
   }
 }

@@ -225,6 +225,58 @@ static async create(req, res) {
       }
     }
 
+// TÍNH TỔNG SỐ LƯỢNG ĐÃ PHÂN BỔ CHO MỖI BIẾN THỂ (mọi khuyến mãi trước đó)
+const allocRows = await PromotionProductModel.findAll({
+  where: { product_variant_id: variantIds },
+  attributes: [
+    'product_variant_id',
+    [sequelize.fn('SUM', sequelize.col('variant_quantity')), 'used_qty'],
+  ],
+  group: ['product_variant_id'],
+  raw: true,
+});
+
+const usedByVariant = {};
+allocRows.forEach(r => {
+  const vid = parseInt(r.product_variant_id);
+  const used = parseInt(r.used_qty) || 0;
+  usedByVariant[vid] = used;
+});
+
+// KIỂM TRA TỒN KHO VÀ KHẢ NĂNG PHÂN BỔ
+for (let i = 0; i < variantIds.length; i++) {
+  const variantId = parseInt(variantIds[i]);
+  const quantityPerPromo = parseInt(variantQuantities[i]); // số lượng/khuyến mãi cho biến thể này
+  const variant = variants.find(v => v.id === variantId);
+
+  if (!variant) {
+    return res.status(400).json({ error: `Không tìm thấy biến thể với ID ${variantId}` });
+  }
+
+  // 1) Hết hàng thì chặn
+  if (!variant.stock || variant.stock <= 0) {
+    return res.status(400).json({
+      error: `Biến thể SKU ${variant.sku} đã hết hàng (stock = 0). Không thể thêm vào khuyến mãi.`,
+    });
+  }
+
+  // 2) Tổng yêu cầu (vì có thể thêm cùng lúc vào nhiều promotion)
+  const requestedTotal = quantityPerPromo * promotionIds.length;
+
+  // 3) Đã dùng trước đó ở các khuyến mãi khác
+  const used = usedByVariant[variantId] || 0;
+
+  // 4) Nếu vượt quá stock => chặn (báo số còn lại)
+  if (used + requestedTotal > variant.stock) {
+    const remaining = Math.max(0, variant.stock - used);
+    return res.status(400).json({
+      error: `Số lượng yêu cầu (${requestedTotal}) cho biến thể SKU ${variant.sku} vượt quá tồn kho (${variant.stock}). ` +
+             `Đã phân bổ trước đó: ${used}. Số còn có thể phân bổ thêm: ${remaining}.`,
+    });
+  }
+}
+
+
     // Tạo payload
     const payloads = [];
     for (const promoId of promotionIds) {
