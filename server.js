@@ -21,17 +21,17 @@ const attachUser = require('./services/attachUser');
 
 
 const webhookRoutes = require('./routes/webhookRoutes');
-app.use('/stripe/webhook', express.raw({type: 'application/json'}), webhookRoutes);
+app.use('/stripe/webhook', express.raw({ type: 'application/json' }), webhookRoutes);
 
 
-cron.schedule('* * * * *', async () => {
+cron.schedule('0 0 * * *', async () => {
   try {
     // 2h: - 2 * 60 * 1000
     const twoMinutesAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
 
     const ordersToUpdate = await OrderModel.findAll({
       where: {
-        status: 'completed',
+        status: 'delivered',
         updated_at: {
           [Op.lte]: twoMinutesAgo,
         },
@@ -39,7 +39,7 @@ cron.schedule('* * * * *', async () => {
     });
 
     for (const order of ordersToUpdate) {
-      order.status = 'delivered';
+      order.status = 'completed';
       await order.save();
     }
 
@@ -112,7 +112,7 @@ io.on('connection', (socket) => {
     socket.join(`auction:${auctionId}`);
   });
 
-  socket.on('disconnect', () => {});
+  socket.on('disconnect', () => { });
 });
 
 // để controller dùng được io

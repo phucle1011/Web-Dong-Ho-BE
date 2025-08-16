@@ -1847,7 +1847,7 @@ t = await sequelize.transaction();
               console.error('[VNPAY] Redis DEL failed:', e.message);
           }
 
-            return res.redirect("https://web-dong-ho-fe-git-main-phucle.vercel.app/cart");
+            return res.redirect("https://web-dong-ho-fe.vercel.app/cart");
         } catch (error) {
             if (t && t.finished !== "commit") {
                 try {

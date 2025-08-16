@@ -8,6 +8,34 @@ const OrderModel = require('../../models/ordersModel');
 const PromotionModel = require('../../models/promotionsModel');
 const OrderDetailModel = require('../../models/orderDetailsModel');
 const ProductVariantModel = require('../../models/productVariantsModel');
+const WithdrawRequestsModel = require('../../models/withdrawRequestsModel');
+
+const FEE_NOTE = 'Phí quên thanh toán đơn hàng đấu giá';
+
+async function sumFeeAllTime() {
+  const row = await WithdrawRequestsModel.findOne({
+    attributes: [[Sequelize.fn('SUM', Sequelize.col('amount')), 'fee']],
+    where: {
+      status: 'approved',
+      note: { [Op.like]: `%${FEE_NOTE}%` },
+    },
+    raw: true,
+  });
+  return parseFloat(row?.fee || 0);
+}
+
+async function sumFeeByRange(startDate, endDate) {
+  const row = await WithdrawRequestsModel.findOne({
+    attributes: [[Sequelize.fn('SUM', Sequelize.col('amount')), 'fee']],
+    where: {
+      status: 'approved',
+      note: { [Op.like]: `%${FEE_NOTE}%` },
+      created_at: { [Op.between]: [startDate, endDate] },
+    },
+    raw: true,
+  });
+  return parseFloat(row?.fee || 0);
+}
 
 class DashboardController {
   static async getCounts(req, res) {
@@ -33,7 +61,7 @@ class DashboardController {
         ],
         raw: true,
       });
-      const total_revenue = total_revenue_result?.totalRevenue || 0;
+      const orderRevenueTotal = parseFloat(total_revenue_result?.totalRevenue || 0);
 
       const now = new Date();
 
@@ -51,26 +79,23 @@ class DashboardController {
 
       async function getRevenueByDateRange(startDate, endDate) {
         const result = await OrderDetailModel.findOne({
-          attributes: [
-            [Sequelize.fn('SUM', Sequelize.literal('price * quantity')), 'revenue']
-          ],
-          include: [
-            {
-              model: OrderModel,
-              as: 'order',
-              where: {
-                status: 'completed',
-                created_at: {
-                  [Op.between]: [startDate, endDate]
-                }
-              },
-              attributes: [],
-            }
-          ],
+          attributes: [[Sequelize.fn('SUM', Sequelize.literal('price * quantity')), 'revenue']],
+          include: [{
+            model: OrderModel,
+            as: 'order',
+            where: { status: 'completed', created_at: { [Op.between]: [startDate, endDate] } },
+            attributes: [],
+          }],
           raw: true,
         });
-        return result?.revenue || 0;
+        return parseFloat(result?.revenue || 0);
       }
+
+      const feeTotal = await sumFeeAllTime();
+      const feeCurrentMonth = await sumFeeByRange(startOfCurrentMonth, endOfCurrentMonth);
+      const feeLastMonth = await sumFeeByRange(startOfLastMonth, endOfLastMonth);
+      const feeCurrentYear = await sumFeeByRange(startOfCurrentYear, endOfCurrentYear);
+      const feeLastYear = await sumFeeByRange(startOfLastYear, endOfLastYear);
 
       const bestSellingVariant = await OrderDetailModel.findOne({
         attributes: [
@@ -94,13 +119,14 @@ class DashboardController {
         group: ['product_variant_id', 'variant.id', 'variant->product.id'],
         order: [[Sequelize.literal('totalSold'), 'DESC']],
         raw: true,
-        nest: true, // Giữ nested structure cho dễ truy xuất
+        nest: true,
       });
 
-      const revenueCurrentMonth = await getRevenueByDateRange(startOfCurrentMonth, endOfCurrentMonth);
-      const revenueLastMonth = await getRevenueByDateRange(startOfLastMonth, endOfLastMonth);
-      const revenueCurrentYear = await getRevenueByDateRange(startOfCurrentYear, endOfCurrentYear);
-      const revenueLastYear = await getRevenueByDateRange(startOfLastYear, endOfLastYear);
+      const revenueCurrentMonth = (await getRevenueByDateRange(startOfCurrentMonth, endOfCurrentMonth)) + feeCurrentMonth;
+      const revenueLastMonth = (await getRevenueByDateRange(startOfLastMonth, endOfLastMonth)) + feeLastMonth;
+      const revenueCurrentYear = (await getRevenueByDateRange(startOfCurrentYear, endOfCurrentYear)) + feeCurrentYear;
+      const revenueLastYear = (await getRevenueByDateRange(startOfLastYear, endOfLastYear)) + feeLastYear;
+      const total_revenue = orderRevenueTotal + feeTotal;
 
       return res.status(200).json({
         status: 200,
@@ -268,30 +294,43 @@ class DashboardController {
         raw: true,
       });
 
-      const dateMap = {};
-      revenueResults.forEach(item => {
-        dateMap[item.date] = parseFloat(item.revenue) || 0;
+      const feeResults = await WithdrawRequestsModel.findAll({
+        attributes: [
+          [Sequelize.fn('DATE', Sequelize.col('created_at')), 'date'],
+          [Sequelize.fn('SUM', Sequelize.col('amount')), 'fee'],
+        ],
+        where: {
+          status: 'approved',
+          note: { [Op.like]: `%${FEE_NOTE}%` },
+          created_at: { [Op.between]: [startDate, endDate] },
+        },
+        group: ['date'],
+        raw: true,
       });
 
-      let current = new Date(startDate);
+      const dateMap = {};
+      revenueResults.forEach(r => { dateMap[r.date] = (parseFloat(r.revenue) || 0); });
+      feeResults.forEach(f => {
+        const day = f.date;
+        const fee = parseFloat(f.fee || 0);
+        dateMap[day] = (dateMap[day] || 0) + fee;
+      });
+
+      let cur = new Date(startDate);
       const items = [];
-      while (current <= endDate) {
-        const dateStr = current.toISOString().split('T')[0];
-        items.push({
-          date: dateStr,
-          revenue: dateMap[dateStr] || 0,
-        });
-        current.setDate(current.getDate() + 1);
+      while (cur <= endDate) {
+        const dateStr = cur.toISOString().split('T')[0];
+        items.push({ date: dateStr, revenue: dateMap[dateStr] || 0 });
+        cur.setDate(cur.getDate() + 1);
       }
 
-      const totalRevenue = items.reduce((sum, item) => sum + item.revenue, 0);
+      const totalRevenue = items.reduce((s, it) => s + it.revenue, 0);
 
       return res.status(200).json({
         status: 200,
         message: 'Lấy doanh thu theo khoảng thời gian thành công',
         data: { items, totalRevenue },
       });
-
     } catch (error) {
       console.error('Error in getRevenueByCustomRange:', error);
       return res.status(500).json({ status: 500, message: 'Lỗi server khi lấy doanh thu theo khoảng thời gian' });
