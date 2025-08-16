@@ -184,41 +184,75 @@ class WishlistController {
     // Thêm từng sản phẩm vào giỏ hàng từ wishlist và xoá khỏi wishlist
     static async addSingleWishlistItemToCart(req, res) {
         try {
-            const { userId, productVariantId, quantity } = req.body;
+            let { userId, productVariantId, quantity } = req.body;
 
+            // Validate body
+            if (!userId || !productVariantId) {
+                return res.status(400).json({ status: 400, message: 'Thiếu userId hoặc productVariantId.' });
+            }
+
+            // Ép kiểu số & fallback
+            userId = Number(userId);
+            productVariantId = Number(productVariantId);
+            quantity = Number(quantity ?? 1);
+            if (!Number.isInteger(quantity) || quantity <= 0) {
+                return res.status(400).json({ status: 400, message: 'quantity không hợp lệ.' });
+            }
+
+            // Tìm biến thể + kiểm tra tồn kho
             const variant = await ProductVariantsModel.findOne({
                 where: { id: productVariantId },
                 attributes: ['id', 'stock'],
             });
 
-            if (!variant || variant.stock < quantity) {
+            const stock = Number(variant?.stock ?? 0);
+            if (!variant || stock < quantity) {
                 return res.status(400).json({ status: 400, message: 'Sản phẩm không đủ tồn kho.' });
             }
 
-            const [cartItem, created] = await CartModel.findOrCreate({
-                where: { user_id: userId, product_variant_id: productVariantId },
-                defaults: { quantity },
-            });
+            // Transaction để an toàn khi thêm & xoá wishlist
+            const t = await WishlistModel.sequelize.transaction();
+            try {
+                const [cartItem, created] = await CartModel.findOrCreate({
+                    where: { user_id: userId, product_variant_id: productVariantId },
+                    defaults: { user_id: userId, product_variant_id: productVariantId, quantity },
+                    transaction: t,
+                });
 
-            if (!created) {
-                cartItem.quantity += quantity;
-                await cartItem.save();
+                if (!created) {
+                    const currentQty = Number(cartItem.quantity ?? 0);
+                    const newQty = currentQty + quantity;
+                    if (newQty > stock) {
+                        await t.rollback();
+                        return res.status(400).json({ status: 400, message: `Số lượng vượt quá tồn kho (${stock}).` });
+                    }
+                    cartItem.quantity = newQty;
+                    await cartItem.save({ transaction: t });
+                }
+
+                // Xoá khỏi wishlist (không fail nếu không tồn tại)
+                await WishlistModel.destroy({
+                    where: { user_id: userId, product_variant_id: productVariantId },
+                    transaction: t,
+                });
+
+                await t.commit();
+                return res.status(200).json({
+                    status: 200,
+                    message: 'Đã thêm sản phẩm vào giỏ hàng và xoá khỏi danh sách yêu thích.',
+                    data: { user_id: userId, product_variant_id: productVariantId, quantity: created ? quantity : cartItem.quantity },
+                });
+            } catch (err) {
+                await t.rollback();
+                console.error('[addSingleWishlistItemToCart] TX error:', err);
+                return res.status(500).json({ status: 500, message: 'Lỗi xử lý giỏ hàng.', error: err?.message });
             }
-
-            // Xoá khỏi wishlist
-            await WishlistModel.destroy({
-                where: { user_id: userId, product_variant_id: productVariantId },
-            });
-
-            res.status(200).json({
-                status: 200,
-                message: 'Đã thêm sản phẩm vào giỏ hàng và xoá khỏi danh sách yêu thích.',
-                data: cartItem,
-            });
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            console.error('[addSingleWishlistItemToCart] error:', error);
+            return res.status(500).json({ status: 500, message: 'Lỗi máy chủ.', error: error?.message });
         }
     }
+
 
     // Thêm tất cả wishlist vào giỏ hàng và xoá khỏi wishlist
     static async addWishlistToCart(req, res) {

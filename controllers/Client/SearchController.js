@@ -1,3 +1,4 @@
+// Web-Dong-Ho-BE/controllers/Client/SearchController.js
 const { Op } = require('sequelize');
 const Sequelize = require('sequelize');
 const Product = require('../../models/productsModel');
@@ -11,12 +12,15 @@ const PromoProd = require('../../models/promotionProductsModel');
 const Promotion = require('../../models/promotionsModel');
 const ProductModel = require('../../models/productsModel');
 
+const NON_AUCTION_WHERE = { is_auction_only: 0 };
+
 const toUrl = (u, req) => {
   if (!u) return u;
-  if (/^https?:\/\//i.test(u)) return u; // đã là absolute
+  if (/^https?:\/\//i.test(u)) return u;
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
   return `${base}/${String(u).replace(/^\/+/, '')}`;
 };
+
 class SearchController {
   static async searchProducts(req, res) {
     try {
@@ -41,19 +45,28 @@ class SearchController {
       const tokens = keyword.toLowerCase().split(/\s+/).filter(t => t);
 
       let finalIds = [];
-      // exact match
+
+      // Exact match theo tên: chỉ nhận product có >=1 variant bán thường
       if (keyword.trim()) {
         const whereEM = {
           status: 1,
           name: Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('name')), keyword.toLowerCase()),
         };
-        const em = await Product.findOne({ where: whereEM, attributes: ['id'], raw: true });
+        const em = await Product.findOne({
+          where: whereEM,
+          attributes: ['id'],
+          include: [
+            { model: Brand, as: 'brand', attributes: [], required: true, where: { status: 1 } },
+            { model: Variant, as: 'variants', attributes: [], required: true, where: NON_AUCTION_WHERE }
+          ],
+          raw: true
+        });
         if (em) finalIds = [em.id];
       }
 
       // Step 1: search by name/desc, SKU, attr-value, attr-name
       if (!finalIds.length) {
-        // 1a
+        // 1a. Name/Desc – product phải có >=1 variant bán thường
         const prodWhere = { status: 1 };
         if (tokens.length) {
           prodWhere[Op.or] = [
@@ -65,34 +78,46 @@ class SearchController {
           where: prodWhere,
           attributes: ['id'],
           include: [
-            { model: Brand, as: 'brand', attributes: [], required: true, where: { status: 1 } } // Chỉ brand active
+            { model: Brand, as: 'brand', attributes: [], required: true, where: { status: 1 } },
+            { model: Variant, as: 'variants', attributes: [], required: true, where: NON_AUCTION_WHERE }
           ],
           raw: true
         });
         const nameDescIds = prods.map(p => p.id);
 
-        // 1b SKU
+        // 1b. SKU – chỉ lấy variant bán thường
         let skuIds = [];
         if (tokens.length) {
           const skus = await Variant.findAll({
-            where: { sku: { [Op.or]: tokens.map(t => ({ [Op.like]: `%${t}%` })) } },
-            attributes: ['product_id'], raw: true
+            where: {
+              is_auction_only: 0,
+              sku: { [Op.or]: tokens.map(t => ({ [Op.like]: `%${t}%` })) }
+            },
+            attributes: ['product_id'],
+            raw: true
           });
           skuIds = skus.map(v => v.product_id);
         }
 
-        // 1c attr-value
+        // 1c. Attr value – chỉ variant bán thường
         let avIds = [];
         if (tokens.length) {
           const avs = await AttrValue.findAll({
             where: { [Op.or]: tokens.map(t => ({ value: { [Op.like]: `%${t}%` } })) },
-            include: [{ model: Variant, as: 'variant', attributes: ['product_id'], required: true }],
-            attributes: ['variant.product_id'], raw: true
+            include: [{
+              model: Variant,
+              as: 'variant',
+              attributes: ['product_id'],
+              required: true,
+              where: NON_AUCTION_WHERE
+            }],
+            attributes: ['variant.product_id'],
+            raw: true
           });
           avIds = avs.map(a => a['variant.product_id']);
         }
 
-        // 1d attr-name
+        // 1d. Attr name – chỉ variant bán thường
         let anIds = [];
         if (tokens.length) {
           const atts = await Attribute.findAll({
@@ -103,8 +128,15 @@ class SearchController {
           if (ids.length) {
             const names = await AttrValue.findAll({
               where: { product_attribute_id: { [Op.in]: ids } },
-              include: [{ model: Variant, as: 'variant', attributes: ['product_id'], required: true }],
-              attributes: ['variant.product_id'], raw: true
+              include: [{
+                model: Variant,
+                as: 'variant',
+                attributes: ['product_id'],
+                required: true,
+                where: NON_AUCTION_WHERE
+              }],
+              attributes: ['variant.product_id'],
+              raw: true
             });
             anIds = names.map(n => n['variant.product_id']);
           }
@@ -115,15 +147,22 @@ class SearchController {
           return res.json({ status: 200, message: 'Không tìm thấy', data: [], pagination: { page, limit, totalItems: 0, totalPages: 0 } });
         }
 
-        // Step 2: lọc thêm theo attribute_filters
+        // Step 2: lọc thêm theo attribute_filters – chỉ qua variant bán thường
         if (attrIds.length || attrVals.length) {
           const avWhere = {};
           if (attrIds.length) avWhere.product_attribute_id = { [Op.in]: attrIds };
           if (attrVals.length) avWhere[Op.or] = attrVals.map(v => ({ value: { [Op.like]: `%${v}%` } }));
           const matches = await AttrValue.findAll({
             where: { ...avWhere, '$variant.product_id$': { [Op.in]: finalIds } },
-            include: [{ model: Variant, as: 'variant', attributes: ['product_id'], required: true }],
-            attributes: [], raw: true
+            include: [{
+              model: Variant,
+              as: 'variant',
+              attributes: ['product_id'],
+              required: true,
+              where: NON_AUCTION_WHERE
+            }],
+            attributes: [],
+            raw: true
           });
           finalIds = Array.from(new Set(matches.map(m => m['variant.product_id'])));
           if (!finalIds.length) {
@@ -132,7 +171,7 @@ class SearchController {
         }
       }
 
-      // Step 3: fetch data & paginate
+      // Step 3: fetch data & paginate (variants chỉ là bán thường)
       const totalItems = finalIds.length;
       const totalPages = Math.ceil(totalItems / limit);
       const pageIds = finalIds.slice(offset, offset + limit);
@@ -143,7 +182,10 @@ class SearchController {
           { model: Brand, as: 'brand', attributes: ['id', 'name'], where: { status: 1 }, required: true },
           { model: Category, as: 'category', attributes: ['id', 'name'] },
           {
-            model: Variant, as: 'variants',
+            model: Variant,
+            as: 'variants',
+            where: NON_AUCTION_WHERE,     // <-- chỉ lấy biến thể bán thường
+            required: false,
             include: [
               { model: Img, as: 'images', attributes: ['id', 'image_url'] },
               { model: AttrValue, as: 'attributeValues', include: [{ model: Attribute, as: 'attribute', attributes: ['id', 'name'] }] },
@@ -168,8 +210,8 @@ class SearchController {
         thumbnail: toUrl(p.thumbnail, req),
         brand: p.brand?.name,
         category: p.category?.name,
-        variants: p.variants.map(v => {
-          const promo = v.promotionProducts[0]?.promotion;
+        variants: (p.variants || []).map(v => {
+          const promo = v.promotionProducts?.[0]?.promotion;
           let finalPrice = parseFloat(v.price);
           if (promo) {
             finalPrice = promo.discount_type === 'percentage'
@@ -181,11 +223,8 @@ class SearchController {
             sku: v.sku,
             price: parseFloat(v.price),
             final_price: Math.max(finalPrice, 0),
-            images: v.images.map(i => ({
-              id: i.id,
-              image_url: toUrl(i.image_url, req)
-            })),
-            attributes: v.attributeValues.map(av => ({
+            images: (v.images || []).map(i => ({ id: i.id, image_url: toUrl(i.image_url, req) })),
+            attributes: (v.attributeValues || []).map(av => ({
               id: av.attribute.id,
               name: av.attribute.name,
               value: av.value
@@ -221,7 +260,6 @@ class SearchController {
       const offset = (page - 1) * limit;
       attribute_id = parseInt(attribute_id, 10);
 
-      // Chỉ lấy các giá trị đang liên kết với variant
       const where = {};
       if (attribute_id) {
         where.product_attribute_id = attribute_id;
@@ -230,32 +268,24 @@ class SearchController {
       const attributeValues = await AttrValue.findAll({
         where,
         attributes: [
-          // lấy distinct value
           [Sequelize.fn('DISTINCT', Sequelize.col('value')), 'value'],
           'product_attribute_id'
         ],
         include: [
-          {
-            model: Variant,
-            as: 'variant',
-            attributes: [],      // không cần trường nào từ variant
-            required: true      // chỉ những giá trị có variant đi kèm
-          },
+          // chỉ lấy giá trị đang gắn với biến thể BÁN THƯỜNG
           {
             model: Variant,
             as: 'variant',
             attributes: [],
             required: true,
+            where: NON_AUCTION_WHERE,
             include: [
               {
                 model: ProductModel,
                 as: 'product',
                 attributes: [],
                 required: true,
-                where: {
-                  publication_status: 'published',
-                  status: 1
-                }
+                where: { publication_status: 'published', status: 1 }
               }
             ]
           },
@@ -270,15 +300,12 @@ class SearchController {
         limit
       });
 
-      // Tính tổng số phần tử (nếu muốn chính xác hơn có thể count riêng)
       const totalItems = attributeValues.length;
 
-      // Định dạng trả về
       return res.json({
         status: 200,
         message: 'Lấy danh sách giá trị thuộc tính thành công',
         data: attributeValues.map(av => ({
-          // vì chỉ distinct đúng value, ở đây ta dùng value làm khóa
           id: av.value,
           value: av.value,
           attribute_id: av.product_attribute_id,
