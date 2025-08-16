@@ -12,7 +12,10 @@ const getAllForComparison = async (req, res) => {
     const products = await ProductModel.findAll({
       where: {
         status: 1,
-         publication_status:'published',
+        publication_status: "published",
+        [Op.and]: [
+          Sequelize.literal(`products.publication_status <> 'auction'`)
+        ]
       },
       attributes: {
         include: [
@@ -49,30 +52,56 @@ const getAllForComparison = async (req, res) => {
           as: "category",
           attributes: ["id", "name"],
         },
+{
+  model: ProductVariantModel,
+  as: "variants",
+  attributes: {
+    include: [
+      "id", "price", "stock", "sku", "product_id", "created_at", "updated_at",
+      [
+        Sequelize.literal(`EXISTS (
+          SELECT 1 FROM auctions a
+          WHERE a.product_variant_id = variants.id
+            AND a.status IN ('upcoming','active','ended')
+        )`),
+        "isAuction"
+      ]
+    ]
+  },
+  where: {
+    [Op.and]: [
+      // ❌ bỏ hết biến thể chỉ dùng cho đấu giá
+      { is_auction_only: 0 },
+      // ❌ bỏ hết biến thể đang hoặc đã có trong bảng auctions
+      Sequelize.literal(`NOT EXISTS (
+        SELECT 1
+        FROM auctions a
+        WHERE a.product_variant_id = variants.id
+          AND a.status IN ('upcoming','active','ended')
+      )`)
+    ]
+  },
+  include: [
+    {
+      model: VariantImageModel,
+      as: "images",
+      attributes: ["id", "image_url"],
+    },
+    {
+      model: AttributeValueModel,
+      as: "attributeValues",
+      attributes: ["id", "value"],
+      include: [
         {
-          model: ProductVariantModel,
-          as: "variants",
-          attributes: ["id", "price", "stock", "sku", "product_id", "created_at", "updated_at"],
-          include: [
-            {
-              model: VariantImageModel,
-              as: "images",
-              attributes: ["id", "image_url"],
-            },
-            {
-              model: AttributeValueModel,
-              as: "attributeValues",
-              attributes: ["id", "value"],
-              include: [
-                {
-                  model: AttributeModel,
-                  as: "attribute",
-                  attributes: ["id", "name"],
-                },
-              ],
-            },
-          ],
+          model: AttributeModel,
+          as: "attribute",
+          attributes: ["id", "name"],
         },
+      ],
+    },
+  ],
+}
+
       ],
       order: [["created_at", "DESC"]],
     });
