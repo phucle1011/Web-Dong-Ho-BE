@@ -198,14 +198,6 @@ module.exports = (io) => {
             user_id: bid.user_id,
             product_variant_id: bid.auction.product_variant_id,
           }));
-
-        // if (conditions.length > 0) {
-        //   await CartDetail.destroy({
-        //     where: {
-        //       [Op.or]: conditions,
-        //     },
-        //   });
-        // }
       }
 
     } catch (e) {

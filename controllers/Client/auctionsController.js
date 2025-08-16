@@ -236,13 +236,16 @@ class AuctionController {
   }
 
   static async placeBid(req, res) {
-    const t = await AuctionModel.sequelize.transaction();
+    const t = await AuctionModel.sequelize.transaction({
+      isolationLevel: require('sequelize').Transaction.ISOLATION_LEVELS.READ_COMMITTED,
+    });
+
     try {
       const { auctionId } = req.params;
       const userId = req.user.id;
       const amount = Number(req.body.bidAmount);
 
-      if (amount <= 0) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         await t.rollback();
         return res.status(400).json({ success: false, message: 'Giá đặt không hợp lệ' });
       }
@@ -263,19 +266,44 @@ class AuctionController {
       }
 
       const currentPrice = Number(auction.current_price ?? auction.start_price ?? 0);
-      if (amount <= currentPrice) {
+      const priceStep = Number(auction.priceStep ?? 1);
+      const minAllowed = currentPrice + priceStep;
+
+      if (amount < minAllowed) {
         await t.rollback();
-        return res.status(400).json({ success: false, message: 'Giá đặt phải cao hơn giá hiện tại' });
+        return res.status(409).json({
+          success: false,
+          code: 'OUTDATED_PRICE',
+          message: `Giá đã nhảy lên ${currentPrice.toLocaleString('vi-VN')}đ. Tối thiểu: ${minAllowed.toLocaleString('vi-VN')}đ`,
+          currentPrice,
+          minAllowed,
+        });
+      }
+
+      const sameAmountExists = await AuctionBidModel.findOne({
+        where: { auction_id: auctionId, bidAmount: amount },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (sameAmountExists) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: 'DUPLICATE_AMOUNT',
+          message: `Mức giá ${amount.toLocaleString('vi-VN')}đ vừa được đặt. Vui lòng đặt cao hơn.`,
+          minAllowed,
+        });
       }
 
       const bid = await AuctionBidModel.create({
         auction_id: auctionId,
         user_id: userId,
         bidAmount: amount,
-        bidTime: new Date(),
+        bidTime: now,
       }, { transaction: t });
 
       auction.current_price = amount;
+      auction.highest_bid_user_id = userId;
       await auction.save({ transaction: t });
 
       await t.commit();
@@ -304,10 +332,18 @@ class AuctionController {
           bidAmount: amount,
           bidTime: bid.bidTime,
           currentPrice: amount,
+          minAllowed: amount + priceStep,
         },
       });
     } catch (err) {
-      await t.rollback();
+      try { await t.rollback(); } catch (_) { }
+      if (err?.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({
+          success: false,
+          code: 'DUPLICATE_AMOUNT',
+          message: 'Mức giá này vừa được đặt. Vui lòng đặt cao hơn.',
+        });
+      }
       console.error('Lỗi placeBid:', err);
       return res.status(500).json({ success: false, message: err.message || 'Lỗi server' });
     }
