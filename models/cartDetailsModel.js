@@ -14,7 +14,7 @@ const CartDetail = connection.define('cart_details', {
     product_variant_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        unique: 'uniq_cart_variant'
+        // unique: 'uniq_cart_variant'
     },
     quantity: {
         type: DataTypes.INTEGER,

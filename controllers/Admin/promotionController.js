@@ -143,6 +143,28 @@ class PromotionController {
       const totalFilteredItems = filteredPromotions.length;
       const paginatedPromotions = filteredPromotions.slice(offset, offset + perPage);
 
+      const usedCountsRaw = await OrderModel.findAll({
+        where: {
+          promotion_id: { [Op.ne]: null },
+          status: { [Op.ne]: 'cancelled' },
+        },
+        attributes: [
+          'promotion_id',
+          [fn('COUNT', col('id')), 'used_count']
+        ],
+        group: ['promotion_id'],
+        raw: true,
+      });
+
+      const usedCountsMap = {};
+      usedCountsRaw.forEach(item => {
+        usedCountsMap[item.promotion_id] = Number(item.used_count);
+      });
+
+      paginatedPromotions.forEach(promo => {
+        promo.dataValues.used_count = usedCountsMap[promo.id] || 0;
+      });
+
       res.status(200).json({
         success: true,
         data: paginatedPromotions,

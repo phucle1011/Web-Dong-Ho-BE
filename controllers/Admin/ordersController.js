@@ -9,7 +9,7 @@ const VariantImageModel = require('../../models/variantImagesModel');
 const ProductVariantAttributeValueModel = require('../../models/productVariantAttributeValuesModel');
 const WithdrawRequestsModel = require('../../models/withdrawRequestsModel');
 
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const axios = require('axios');
 const ExcelJS = require('exceljs');
 const sequelize = require('../../config/database');
@@ -67,7 +67,7 @@ class OrderController {
             const updatedOrders = await OrderModel.findAll({
                 where: whereClause,
                 include: [{ model: UserModel, as: 'user' },
-                    { model: OrderDetailsModel, as: 'orderDetails', attributes: ['auction_id'] }
+                { model: OrderDetailsModel, as: 'orderDetails', attributes: ['auction_id'] }
                 ],
                 order: [['created_at', 'DESC']]
             });
@@ -783,7 +783,6 @@ class OrderController {
             res.status(500).json({ message: 'Lỗi server', error: error.message });
         }
     }
-
 }
 
 module.exports = OrderController;
