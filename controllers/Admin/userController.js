@@ -128,7 +128,7 @@ class UserController {
             const { id } = req.params;
             const { status, reason } = req.body;
 
-            // Kiểm tra không cho tự cập nhật trạng thái chính mình
+            // Không cho tự cập nhật trạng thái của chính mình
             if (req.user && req.user.id && parseInt(id) === parseInt(req.user.id)) {
                 return res.status(403).json({
                     message: "Bạn không thể tự thay đổi trạng thái tài khoản của chính mình."
@@ -148,15 +148,22 @@ class UserController {
                 return res.status(404).json({ message: "Người dùng không tồn tại." });
             }
 
+            // 🚫 Thêm điều kiện chặn thay đổi trạng thái admin
+            if (user.role === 'admin') {
+                return res.status(403).json({
+                    message: "Không thể thay đổi trạng thái tài khoản admin."
+                });
+            }
+
+            // Thực hiện update cho user thường
             user.status = status;
             user.lockout_reason = reason;
             await user.save();
 
             const htmlContent = getEmailTemplate(user.name, status, reason);
-
             await sendEmail(user.email, "Thông báo thay đổi trạng thái tài khoản", htmlContent);
 
-            // build lại counts để FE có thể lấy luôn mà không cần fetch lại
+            // build lại counts
             const allStatuses = ['active', 'locked'];
             const counts = await Promise.all(
                 allStatuses.map(s => UserModel.count({ where: { status: s } }))
@@ -165,7 +172,6 @@ class UserController {
             const countsObject = {
                 all: totalAll,
                 active: counts[0],
-                // inactive: counts[1],
                 locked: counts[1]
             };
 
