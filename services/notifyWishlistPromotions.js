@@ -105,7 +105,7 @@ async function notifyWishlistPromotions() {
                                     </strong>
                                   </p>
                                   <p style="margin:0;">
-                                    <a href="${process.env.CLIENT_URL}/product/${product?.id}"
+                                    <a href="${process.env.CLIENT_URL}/all-product/"
                                       style="background-color:#073272;color:#ffffff;
                                               text-decoration:none;padding:8px 16px;
                                               border-radius:4px;display:inline-block;font-size:14px;">
