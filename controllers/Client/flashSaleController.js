@@ -89,6 +89,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
     };
 
     const discountedVariants = await ProductVariant.findAll({
+      where: { is_auction_only: false },
       include: [
         {
           model: Product,
@@ -111,6 +112,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
               { variant_quantity: { [Op.gt]: 0 } },
             ],
           },
+          attributes: ['id', 'variant_quantity'],
           include: [
             {
               model: PromotionModel,
@@ -118,7 +120,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
               where: promotionWhere,
               required: true,
               attributes: [
-                "id", "name", "discount_type", "discount_value",
+                "id", "name", "code", "discount_type", "discount_value",
                 "start_date", "end_date", "max_price", "quantity"
               ],
             },
@@ -129,7 +131,6 @@ static async getDiscountedProductsByNotificationId(req, res) {
 
     const variantIds = discountedVariants.map(v => v.id);
 
-    // ✅ Lấy dữ liệu đánh giá
     const ratingData = variantIds.length
       ? await Comment.findAll({
           where: { parent_id: null },
@@ -160,7 +161,6 @@ static async getDiscountedProductsByNotificationId(req, res) {
       };
     }
 
-    // ✅ Gom nhóm theo sản phẩm
     const productMap = new Map();
 
     for (const variant of discountedVariants) {
@@ -172,6 +172,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
       const bestPromotion = (variant.promotionProducts || []).reduce((best, pp) => {
         const promo = pp.promotion;
         if (!promo) return best;
+        if (pp.variant_quantity !== null && pp.variant_quantity <= 0) return best;
 
         const cap = promo.max_price != null
           ? Math.max(0, parseFloat(promo.max_price) || 0)
@@ -189,19 +190,27 @@ static async getDiscountedProductsByNotificationId(req, res) {
           discountAmount = cap != null ? Math.min(raw, cap) : raw;
         }
 
+        discountAmount = Math.min(discountAmount, variantPrice);
         const finalPrice = Math.max(0, variantPrice - discountAmount);
         const percent = variantPrice > 0 ? (discountAmount / variantPrice) * 100 : 0;
 
         const info = {
           id: promo.id,
+          code: promo.code,
           name: promo.name,
           discount_type: promo.discount_type,
           discount_value: parseFloat(promo.discount_value),
-          discounted_price: parseFloat(finalPrice.toFixed(2)),
-          discount_percent: parseFloat(percent.toFixed(2)),
+          start_date: promo.start_date,
+          end_date: promo.end_date,
+          max_price: promo.max_price != null ? Number(promo.max_price) : null,
+          discounted_price: Number(finalPrice.toFixed(2)),
+          discount_amount: Number(discountAmount.toFixed(2)),
+          discount_percent: Number(percent.toFixed(2)),
+          meets_conditions: promo.quantity == null || promo.quantity > 0,
+          variant_quantity_left: pp.variant_quantity
         };
 
-        if (!best || info.discounted_price < best.discounted_price) {
+        if (!best || (info.meets_conditions && info.discounted_price < best.discounted_price)) {
           return info;
         }
         return best;
@@ -209,17 +218,20 @@ static async getDiscountedProductsByNotificationId(req, res) {
 
       const variantJson = variant.toJSON();
 
+      const lowest = bestPromotion?.discounted_price ?? variantPrice;
+      const percent = bestPromotion?.discount_percent ?? 0;
+
       variantJson.promotion = bestPromotion || {
-        discounted_price: variantPrice,
-        discount_percent: 0,
+        discounted_price: lowest,
+        discount_percent: percent,
+        discount_amount: 0,
+        meets_conditions: false,
       };
 
-      // ✅ Gắn đánh giá vào variant
       const rating = ratingMap[variant.id] || { avgRating: "0.0", ratingCount: 0 };
       variantJson.averageRating = rating.avgRating;
       variantJson.ratingCount = rating.ratingCount;
 
-      // ✅ Gom nhóm theo product
       if (!productMap.has(product.id)) {
         productMap.set(product.id, {
           id: product.id,
@@ -246,6 +258,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
     return res.status(500).json({ message: "Lỗi server khi xử lý yêu cầu" });
   }
 }
+
 
 
 

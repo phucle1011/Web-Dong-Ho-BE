@@ -580,14 +580,12 @@ if (promotions.length > 0) {
     }
 
     const now = new Date();
-
     const whereCommon = {
       id: { [Op.ne]: productId },
       status: 1,
       publication_status: "published",
     };
 
-    // Helper: query cấu hình chung + include đủ để không phải query thêm từng biến thể
     const buildQuery = (extraWhere) => ({
       where: { ...whereCommon, ...extraWhere },
       include: [
@@ -595,8 +593,8 @@ if (promotions.length > 0) {
           model: ProductVariant,
           as: "variants",
           required: true,
-          attributes: ["id", "price", "stock", "is_auction_only"],
-          where: { is_auction_only: 0 },
+          attributes: ["id", "price", "stock", "is_auction_only","sku"],
+          where: { is_auction_only: false },
           include: [
             {
               model: ProductVariantAttributeValuesModel,
@@ -604,16 +602,11 @@ if (promotions.length > 0) {
               include: [{ model: ProductAttributeModel, as: "attribute" }],
             },
             { model: VariantImagesModel, as: "images" },
-
-            // 👉 Include promo ngay tại đây để tránh N+1
             {
               model: PromotionProductModel,
               as: "promotionProducts",
               required: false,
-              // (Tuỳ chọn) Lọc từ DB luôn các promo hết lượt ở cấp biến thể
-              // where: {
-              //   [Op.or]: [{ variant_quantity: null }, { variant_quantity: { [Op.gt]: 0 } }],
-              // },
+              attributes: ['id', 'variant_quantity'],
               include: [
                 {
                   model: PromotionModel,
@@ -625,16 +618,8 @@ if (promotions.length > 0) {
                     end_date: { [Op.gte]: now },
                   },
                   attributes: [
-                    "id",
-                    "code",
-                    "name",
-                    "discount_type",
-                    "discount_value",
-                    "quantity",
-                    "start_date",
-                    "end_date",
-                    "status",
-                    "max_price",
+                    "id", "code", "name", "discount_type", "discount_value",
+                    "quantity", "start_date", "end_date", "status", "max_price"
                   ],
                 },
               ],
@@ -642,11 +627,10 @@ if (promotions.length > 0) {
           ],
         },
       ],
-      attributes: ["id", "name", "thumbnail"],
+      attributes: ["id", "name", "thumbnail", "createdAt"],
       limit: 6,
     });
 
-    // Ưu tiên: cùng category & brand -> chỉ category -> chỉ brand -> random
     let similarProducts = await Product.findAll(
       buildQuery({ category_id: baseProduct.category_id, brand_id: baseProduct.brand_id })
     );
@@ -663,15 +647,17 @@ if (promotions.length > 0) {
       similarProducts = await Product.findAll({
         where: whereCommon,
         include: buildQuery({}).include,
-        attributes: ["id", "name", "thumbnail"],
+        attributes: ["id", "name", "thumbnail", "createdAt"],
         order: Sequelize.literal("RAND()"),
         limit: 6,
       });
     }
 
-    // Tính toán promo (skip variant_quantity=0, áp dụng max_price) + tổng stock, đếm biến thể
-    const productsWithDetails = similarProducts.map((p) => {
+    const productsWithDetails = similarProducts.map(p => {
       const pj = p.toJSON();
+      pj.created_at = pj.createdAt;
+      delete pj.createdAt;
+
       const variants = pj.variants || [];
 
       pj.variantCount = variants.length;
@@ -683,14 +669,9 @@ if (promotions.length > 0) {
         const best = (v.promotionProducts || []).reduce((best, pp) => {
           const promo = pp?.promotion;
           if (!promo) return best;
+          if (pp.variant_quantity !== null && pp.variant_quantity <= 0) return best;
 
-          // ✅ Bỏ qua khuyến mãi nếu hết lượt ở cấp biến thể
-          if (pp.variant_quantity !== null && pp.variant_quantity <= 0) {
-            return best;
-          }
-
-          const cap =
-            promo.max_price != null ? Math.max(0, parseFloat(promo.max_price) || 0) : null;
+          const cap = promo.max_price != null ? Math.max(0, parseFloat(promo.max_price) || 0) : null;
 
           let discountAmount = 0;
           if (promo.discount_type === "percentage") {
@@ -699,26 +680,34 @@ if (promotions.length > 0) {
             discountAmount = cap != null ? Math.min(raw, cap) : raw;
           } else if (promo.discount_type === "fixed") {
             const fixed = Math.max(0, parseFloat(promo.discount_value) || 0);
-            const raw = Math.min(fixed, price); // không giảm quá giá gốc
+            const raw = Math.min(fixed, price);
             discountAmount = cap != null ? Math.min(raw, cap) : raw;
           }
 
+          discountAmount = Math.min(discountAmount, price);
           const finalPrice = Math.max(0, price - discountAmount);
           const percent = price > 0 ? (discountAmount / price) * 100 : 0;
 
           const info = {
             id: promo.id,
             code: promo.code,
+            name: promo.name,
             discount_type: promo.discount_type,
             discount_value: parseFloat(promo.discount_value),
-            discounted_price: parseFloat(finalPrice.toFixed(2)),
-            discount_percent: parseFloat(percent.toFixed(2)),
+            start_date: promo.start_date,
+            end_date: promo.end_date,
+            max_price: promo.max_price != null ? Number(promo.max_price) : null,
+            discounted_price: Number(finalPrice.toFixed(2)),
+            discount_amount: Number(discountAmount.toFixed(2)),
+            discount_percent: Number(percent.toFixed(2)),
             meets_conditions: promo.quantity == null || promo.quantity > 0,
+            variant_quantity_left: pp.variant_quantity
           };
 
           if (!best || (info.meets_conditions && info.discounted_price < best.discounted_price)) {
             return info;
           }
+
           return best;
         }, null);
 
@@ -728,14 +717,14 @@ if (promotions.length > 0) {
         v.promotion = best || {
           discounted_price: lowest,
           discount_percent: percent,
-          meets_conditions: true,
+          discount_amount: 0,
+          meets_conditions: false
         };
       }
 
       return pj;
     });
 
-    // ✅ Gắn rating cho từng variant (dựa vào comment gốc + orderDetail)
     const allVariantIds = productsWithDetails.flatMap((p) => p.variants?.map((v) => v.id) || []);
     let ratingMap = {};
 
@@ -786,7 +775,12 @@ if (promotions.length > 0) {
       status: 200,
       message: "Lấy sản phẩm tương tự thành công",
       data: productsWithDetails,
-      pagination: { currentPage: 1, limit: 6, totalPages: 1, totalProducts: productsWithDetails.length },
+      pagination: {
+        currentPage: 1,
+        limit: 6,
+        totalPages: 1,
+        totalProducts: productsWithDetails.length,
+      },
       totalVariants,
     });
   } catch (err) {
@@ -794,6 +788,7 @@ if (promotions.length > 0) {
     res.status(500).json({ message: "Đã xảy ra lỗi khi lấy sản phẩm tương tự" });
   }
 }
+
 
 
 }
