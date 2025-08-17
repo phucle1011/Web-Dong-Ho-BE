@@ -371,68 +371,69 @@ static async getAll(req, res) {
       );
 
       // Tính khuyến mãi tốt nhất cho từng biến thể
-      p.variants.forEach((variant) => {
-        const basePrice = parseFloat(variant.price) || 0;
-        let bestPromo = null;
-        let lowestPrice = basePrice;
+     p.variants.forEach((variant) => {
+  const basePrice = parseFloat(variant.price) || 0;
+  let bestPromo = null;
+  let lowestPrice = basePrice;
 
-        (variant.promotionProducts || []).forEach((pp) => {
-          const promo = pp.promotion;
-          if (!promo) return;
+  (variant.promotionProducts || []).forEach((pp) => {
+    const promo = pp.promotion;
+    if (!promo) return;
 
-          let discountAmount = 0;
-          let finalPrice = basePrice;
-          let pct = 0;
+    let discountAmount = 0; // <-- tiền giảm thực tế
+    let finalPrice = basePrice; // <-- giá sau khi giảm
+    let pct = 0; // <-- % giảm thực tế
 
-          if (promo.discount_type === "percentage") {
-            const rawDisc =
-              (basePrice * parseFloat(promo.discount_value)) / 100;
-            const maxDisc = parseFloat(promo.max_price) || Infinity;
-            discountAmount = Math.min(rawDisc, maxDisc);
-            finalPrice = basePrice - discountAmount;
-            pct = basePrice > 0 ? (discountAmount / basePrice) * 100 : 0;
-          } else {
-            discountAmount = parseFloat(promo.discount_value);
-            finalPrice = basePrice - discountAmount;
-            pct = basePrice > 0 ? ((basePrice - finalPrice) / basePrice) * 100 : 0;
-          }
+    if (promo.discount_type === "percentage") {
+      const rawDisc = (basePrice * parseFloat(promo.discount_value)) / 100;
+      const maxDisc = parseFloat(promo.max_price) || Infinity;
+      discountAmount = Math.min(rawDisc, maxDisc);
+      finalPrice = basePrice - discountAmount;
+      pct = basePrice > 0 ? (discountAmount / basePrice) * 100 : 0;
+    } else {
+      discountAmount = parseFloat(promo.discount_value);
+      finalPrice = basePrice - discountAmount;
+      pct = basePrice > 0 ? (discountAmount / basePrice) * 100 : 0;
+    }
 
-          finalPrice = Math.max(0, +finalPrice.toFixed(2));
-          discountAmount = +discountAmount.toFixed(2);
-          pct = +pct.toFixed(2);
+    finalPrice = Math.max(0, +finalPrice.toFixed(2));
+    discountAmount = +discountAmount.toFixed(2);
+    pct = +pct.toFixed(2);
 
-          const promoData = {
-            id: promo.id,
-            code: promo.code,
-            discount_type: promo.discount_type,
-            discount_value: parseFloat(promo.discount_value),
-            discount_amount: discountAmount,
-            discounted_price: finalPrice,
-            discount_percent: pct,
-            meets_conditions: promo.quantity == null || promo.quantity > 0,
-          };
+    const promoData = {
+      id: promo.id,
+      code: promo.code,
+      discount_type: promo.discount_type,
+      discount_value: parseFloat(promo.discount_value),
+      discount_amount: discountAmount,   // ✅ tiền giảm
+      discounted_price: finalPrice,      // ✅ giá sau giảm
+      discount_percent: pct,              // ✅ % giảm thực tế
+      meets_conditions: promo.quantity == null || promo.quantity > 0,
+    };
 
-          if (
-            !bestPromo ||
-            (promoData.meets_conditions &&
-              promoData.discounted_price < bestPromo.discounted_price)
-          ) {
-            bestPromo = promoData;
-          }
-        });
+    if (
+      !bestPromo ||
+      (promoData.meets_conditions &&
+        promoData.discounted_price < bestPromo.discounted_price)
+    ) {
+      bestPromo = promoData;
+    }
+  });
 
-        if (bestPromo && bestPromo.meets_conditions) {
-          lowestPrice = bestPromo.discounted_price;
-        }
+  if (bestPromo && bestPromo.meets_conditions) {
+    lowestPrice = bestPromo.discounted_price;
+  }
 
-        variant.final_price = bestPromo ? bestPromo.discounted_price : null;
-        variant.promotion =
-          bestPromo || {
-            discounted_price: lowestPrice,
-            discount_percent: 0,
-            meets_conditions: true,
-          };
-      });
+  variant.final_price = bestPromo ? bestPromo.discounted_price : null;
+  variant.promotion =
+    bestPromo || {
+      discounted_price: lowestPrice,
+      discount_percent: 0,
+      discount_amount: 0, // <-- thêm tiền giảm mặc định
+      meets_conditions: true,
+    };
+});
+;
 
       return p;
     });
