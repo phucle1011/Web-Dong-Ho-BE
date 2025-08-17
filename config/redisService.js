@@ -15,7 +15,7 @@ class RedisService {
   }
 
   async ensureConnection() {
-    const st = this.client.status; 
+    const st = this.client.status;  
     if (st === 'ready' || st === 'connecting' || st === 'wait' || st === 'reconnecting') return;
 
     if (st === 'end') {

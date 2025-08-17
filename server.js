@@ -135,3 +135,6 @@ const redis = require('./config/redis');
 server.listen(port, () => {
   console.log(`Server chạy tại http://localhost:${port}`);
 });
+
+require('./config/emailWorker');
+
