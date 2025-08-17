@@ -94,6 +94,17 @@ class EmailController {
           userId: customer.id,
           promotionId,
         });
+
+        // ✅ Cập nhật trạng thái đã gửi
+        await PromotionUserModel.update(
+          { email_sent: true },
+          {
+            where: {
+              user_id: customer.id,
+              promotion_id: promotionId,
+            },
+          }
+        );
       }
 
       return res.status(200).json({ message: 'Đã đưa email vào hàng đợi.' });
