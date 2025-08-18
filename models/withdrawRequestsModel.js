@@ -17,11 +17,11 @@ const WithdrawRequestsModel = connection.define('withdraw_requests', {
     },
     method: {
         type: DataTypes.ENUM('bank'),
-        allowNull: false
+        allowNull: true
     },
     bank_account: {
         type: DataTypes.TEXT,
-        allowNull: false
+        allowNull: true
     },
     receiver_name: {
         type: DataTypes.STRING,
@@ -29,19 +29,19 @@ const WithdrawRequestsModel = connection.define('withdraw_requests', {
     },
     status: {
         type: DataTypes.ENUM('pending', 'approved', 'rejected'),
-        allowNull: false
+        allowNull: true
     },
     note: {
         type: DataTypes.TEXT,
-        allowNull: false
+        allowNull: true
     },
     bank_name: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
     },
     type: {
         type: DataTypes.ENUM('withdraw', 'refund', 'recharge'),
-        allowNull: false,
+        allowNull: true,
         defaultValue: 'withdraw'
     },
     order_id: {

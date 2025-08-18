@@ -228,39 +228,41 @@ class OrderController {
                 const walletBalance = Number(order.wallet_balance) || 0;
 
                 let refundAmount = 0;
+                let shouldRefund = true;
 
                 if (paymentMethod === 'cod') {
                     if (walletBalance <= 0) {
-                        await t.rollback();
-                        return res.status(400).json({ message: "Đơn hàng COD không có phần thanh toán ví để hoàn tiền" });
+                        shouldRefund = false;
+                    } else {
+                        refundAmount = walletBalance;
                     }
-                    refundAmount = walletBalance;
                 } else {
                     refundAmount = Number(order.total_price || 0) + walletBalance;
                 }
 
-                const newBalance = Number(user.balance || 0) + refundAmount;
-                console.log(`Hoàn tiền ${refundAmount} vào ví của người dùng ${user.id}. Số dư cũ: ${user.balance}, Số dư mới: ${newBalance}`);
+                if (shouldRefund) {
+                    const newBalance = Number(user.balance || 0) + refundAmount;
 
-                if (isNaN(newBalance)) {
-                    await t.rollback();
-                    return res.status(500).json({ message: "Lỗi tính toán số dư ví." });
+                    if (isNaN(newBalance)) {
+                        await t.rollback();
+                        return res.status(500).json({ message: "Lỗi tính toán số dư ví." });
+                    }
+
+                    user.balance = newBalance;
+                    await user.save({ transaction: t });
+
+                    await WithdrawRequestsModel.create({
+                        user_id: user.id,
+                        amount: refundAmount,
+                        method: 'bank',
+                        bank_account: null,
+                        bank_name: null,
+                        note: 'Hoàn tiền đơn hàng thanh toán',
+                        status: 'approved',
+                        type: 'refund',
+                        order_id: order.id
+                    }, { transaction: t });
                 }
-
-                user.balance = newBalance;
-                await user.save({ transaction: t });
-
-                await WithdrawRequestsModel.create({
-                    user_id: user.id,
-                    amount: refundAmount,
-                    method: 'bank',
-                    bank_account: '',
-                    bank_name: '',
-                    note: 'Hoàn tiền đơn hàng thanh toán',
-                    status: 'approved',
-                    type: 'refund',
-                    order_id: order.id
-                }, { transaction: t });
 
                 if (order.promotion_id) {
                     const promotion = await PromotionModel.findByPk(order.promotion_id, { transaction: t });
@@ -294,13 +296,16 @@ class OrderController {
                     console.error("Lỗi gửi email hủy đơn hàng:", emailError);
                 }
 
-                return res.status(200).json({
-                    status: 200,
-                    message: `Đã hoàn tiền ${refundAmount.toLocaleString()} VNĐ vào ví và hủy đơn hàng.`,
-                    refundedAmount: refundAmount,
-                    orderStatus: order.status,
-                    data: order,
-                });
+               return res.status(200).json({
+  status: 200,
+  message: shouldRefund
+    ? `Đã hoàn tiền ${refundAmount.toLocaleString()} VNĐ vào ví và hủy đơn hàng.`
+    : "Hủy đơn hàng thành công (không hoàn tiền vì không đủ điều kiện).",
+  refundedAmount: shouldRefund ? refundAmount : 0,
+  orderStatus: order.status,
+  data: order,
+});
+
             }
 
             if (name !== undefined) order.name = name;
@@ -322,7 +327,11 @@ class OrderController {
 
         } catch (error) {
             await t.rollback();
-            console.error("Lỗi cập nhật đơn hàng:", error);
+            console.error("🛑 Lỗi cập nhật đơn hàng:");
+            console.error("📄 Message:", error.message);
+            console.error("📦 Full error object:", error);
+            console.error("🧾 Stack:", error.stack);
+
             return res.status(500).json({ error: error.message });
         }
     }
