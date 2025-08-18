@@ -75,7 +75,7 @@ static async getAllNewProducts(req, res) {
           ],
         },
       ],
-      attributes: ['id', 'name', 'thumbnail', 'createdAt'],
+      attributes: ['id', 'name', 'thumbnail', 'createdAt','slug'],
       order: [['createdAt', 'DESC']],
       limit: 8,
     });
@@ -239,7 +239,7 @@ static async getTopSoldProducts(req, res) {
         {
           model: Product,
           as: 'product',
-          attributes: ['id', 'name', 'thumbnail', 'createdAt'],
+          attributes: ['id', 'name', 'thumbnail', 'createdAt','slug'],
         }
       ]
     });
@@ -277,7 +277,7 @@ static async getTopSoldProducts(req, res) {
             status: 1,
             publication_status: 'published'
           },
-          attributes: ['id', 'name', 'thumbnail', 'createdAt'],
+          attributes: ['id', 'name', 'thumbnail', 'createdAt','slug'],
           include: [
             {
               model: Category,
@@ -465,7 +465,7 @@ static async getDiscountedProducts(req, res) {
       model: Product,
       as: 'product',
       where: { status: 1, publication_status: 'published' },
-      attributes: ['id', 'name', 'thumbnail', 'createdAt'],
+      attributes: ['id', 'name', 'thumbnail', 'createdAt','slug'],
       include: [
         {
           model: Category,
@@ -651,14 +651,16 @@ static async getDiscountedProducts(req, res) {
       // Gom theo product
       if (!productMap.has(product.id)) {
         productMap.set(product.id, {
-          id: product.id,
-          name: product.name,
-          thumbnail: product.thumbnail,
-          created_at: product.createdAt,
-          variants: [variantJson],
-          total_stock: parseInt(variant.stock) || 0,
-          variantCount: 1,
-        });
+  id: product.id,
+  slug: product.slug, // ✅ thêm dòng này
+  name: product.name,
+  thumbnail: product.thumbnail,
+  created_at: product.createdAt,
+  variants: [variantJson],
+  total_stock: parseInt(variant.stock) || 0,
+  variantCount: 1,
+});
+
       } else {
         const p = productMap.get(product.id);
         p.variants.push(variantJson);

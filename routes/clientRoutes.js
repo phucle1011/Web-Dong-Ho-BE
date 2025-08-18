@@ -66,10 +66,10 @@ router.get('/product-attributes',   SearchController.getProductAttributes);
 router.post("/chatbox",chatWithBot.chatWithBot);
 
 //------------------[ PRODUCTS ]------------------
-router.get('/products/:id/variants', ProductController.getNonAuctionVariantsWithPromotion);
-router.get('/products/:id/auction-variants', ProductController.getAuctionVariants);
+router.get('/products/:slug/variants', ProductController.getNonAuctionVariantsWithPromotion);
+router.get('/products/:slug/auction-variants', ProductController.getAuctionVariants);
 
-router.get('/products/:id/similar', ProductController.getSimilarProducts);
+router.get('/products/:slug/similar', ProductController.getSimilarProducts);
 
 //------------------[ CATEGORY ]------------------
 router.get("/category/list", categoryController.getCategories);

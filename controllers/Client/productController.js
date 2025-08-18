@@ -18,12 +18,12 @@ const { Op, fn, col, literal, Sequelize } = require("sequelize");
 class ProductController {
   static async getNonAuctionVariantsWithPromotion(req, res) {
     try {
-      const productId = req.params.id;
+      const Slug = req.params.slug;
       const now = new Date();
 
       const product = await Product.findOne({
         where: {
-          id: productId,
+          slug: Slug,
           publication_status: "published",
           status: 1,
         },
@@ -256,13 +256,13 @@ if (promotions.length > 0) {
   }
   static async getAuctionVariants(req, res) {
     try {
-      const productId = req.params.id;
+      const Slug = req.params.slug;
       const now = new Date();
 
       // Lấy product đã xuất bản, còn hiển thị
       const product = await Product.findOne({
         where: {
-          id: productId,
+          slug: Slug,
           publication_status: "published",
           status: 1,
         },
@@ -568,10 +568,10 @@ if (promotions.length > 0) {
 
   static async getSimilarProducts(req, res) {
   try {
-    const productId = req.params.id;
+    const Slug = req.params.slug;
 
     const baseProduct = await Product.findOne({
-      where: { id: productId, status: 1, publication_status: "published" },
+      where: { slug: Slug, status: 1, publication_status: "published" },
       attributes: ["id", "category_id", "brand_id"],
     });
 
@@ -581,7 +581,7 @@ if (promotions.length > 0) {
 
     const now = new Date();
     const whereCommon = {
-      id: { [Op.ne]: productId },
+      slug: { [Op.ne]: Slug },
       status: 1,
       publication_status: "published",
     };
@@ -627,7 +627,7 @@ if (promotions.length > 0) {
           ],
         },
       ],
-      attributes: ["id", "name", "thumbnail", "createdAt"],
+      attributes: ["id", "name", "thumbnail", "createdAt","slug"],
       limit: 6,
     });
 

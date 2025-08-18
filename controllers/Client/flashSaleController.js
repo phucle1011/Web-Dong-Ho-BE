@@ -95,7 +95,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
           model: Product,
           as: "product",
           where: { status: 1, publication_status: "published" },
-          attributes: ["id", "name", "thumbnail", "createdAt"],
+          attributes: ["id", "name", "thumbnail","slug", "createdAt"],
         },
         {
           model: VariantImagesModel,
@@ -236,6 +236,7 @@ static async getDiscountedProductsByNotificationId(req, res) {
         productMap.set(product.id, {
           id: product.id,
           name: product.name,
+          slug: product.slug,
           thumbnail: product.thumbnail,
           created_at: product.createdAt,
           variants: [variantJson],
