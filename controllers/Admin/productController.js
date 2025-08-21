@@ -358,7 +358,7 @@ static async getPublishedAuctionProducts(req, res) {
 
 
   // Lấy chi tiết theo ID
-  static async getById(req, res) {
+ static async getById(req, res) {
   try {
     const { id } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -422,6 +422,12 @@ static async getPublishedAuctionProducts(req, res) {
           attributes: ["id"],
           required: false,
         },
+        {
+          model: AuctionsModel,
+          as: "auctions", // phải đúng alias bạn định nghĩa ở association
+          attributes: ["id"],
+          required: false,
+        },
       ],
       order: [["created_at", "DESC"]],
     });
@@ -430,9 +436,16 @@ static async getPublishedAuctionProducts(req, res) {
     const variants = rows.map((variant) => {
       const usedInOrder = variant.orderDetails && variant.orderDetails.length > 0;
       const usedInCart = variant.carts && variant.carts.length > 0;
+const usedInAuction = variant.auctions && variant.auctions.length > 0; // ✅ đúng alias
+
       return {
         ...variant.toJSON(),
-        canDelete: !usedInOrder && !usedInCart,
+        canDelete: !usedInOrder && !usedInCart && !usedInAuction,
+        usedIn: {
+          order: usedInOrder,
+          cart: usedInCart,
+          auction: usedInAuction,
+        },
       };
     });
 
@@ -455,6 +468,7 @@ static async getPublishedAuctionProducts(req, res) {
     res.status(500).json({ error: error.message });
   }
 }
+
 
 
 
