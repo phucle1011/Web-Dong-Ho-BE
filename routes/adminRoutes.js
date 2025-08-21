@@ -102,7 +102,7 @@ router.get('/promotions/ss/all', promotionProductsController.getAllPromotion);
 router.get('/promotion/:id', promotionProductsController.getById);
 router.post('/promotion-products', promotionProductsController.create);
 router.put('/promotion/:id', promotionProductsController.update);
-router.delete('/promotions/:id', promotionProductsController.remove);
+router.delete('/promotions/:id', promotionProductsController.delete);
 
 //------------------[ PRODUCT ]------------------\
 router.get('/products/draft', ProductController.getDraftProducts);
