@@ -42,38 +42,83 @@ class SearchController {
 
       const attrIds = toIntList(attribute_ids);
       const attrVals = toStrList(attribute_values);
-      const tokens = keyword.toLowerCase().split(/\s+/).filter(t => t);
-
+      const keywordTrimmed = keyword.trim();
+      const tokens = keywordTrimmed.toLowerCase().split(/\s+/).filter(t => t);
       let finalIds = [];
 
-      // Exact match theo tên: chỉ nhận product có >=1 variant bán thường
-      if (keyword.trim()) {
-        const whereEM = {
-          status: 1,
-          name: Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('name')), keyword.toLowerCase()),
-        };
-        const em = await Product.findOne({
-          where: whereEM,
-          attributes: ['id'],
-          include: [
-            { model: Brand, as: 'brand', attributes: [], required: true, where: { status: 1 } },
-            { model: Variant, as: 'variants', attributes: [], required: true, where: NON_AUCTION_WHERE }
-          ],
-          raw: true
-        });
-        if (em) finalIds = [em.id];
+      // === 🔍 BỔ SUNG: Tìm theo tên đầy đủ (ưu tiên cao) ===
+      if (keywordTrimmed) {
+        try {
+          const fullMatchProducts = await Product.findAll({
+            where: {
+              status: 1,
+              name: { [Op.like]: `%${keywordTrimmed}%` }
+            },
+            attributes: ['id'],
+            include: [{
+              model: Variant,
+              as: 'variants',
+              attributes: [],
+              required: true,
+              where: {
+                ...NON_AUCTION_WHERE,
+                stock: { [Op.gt]: 0 } // Chỉ biến thể còn hàng
+              }
+            }],
+            raw: true
+          });
+
+          if (fullMatchProducts.length > 0) {
+            finalIds = Array.from(new Set(fullMatchProducts.map(p => p.id)));
+          }
+        } catch (err) {
+          console.warn('Lỗi tìm kiếm tên đầy đủ:', err.message);
+          // Vẫn tiếp tục với logic cũ nếu có lỗi
+        }
       }
 
-      // Step 1: search by name/desc, SKU, attr-value, attr-name
+      // Step 1: Tìm theo tên, mô tả, SKU, thuộc tính
       if (!finalIds.length) {
-        // 1a. Name/Desc – product phải có >=1 variant bán thường
+        // 1a. Tìm theo tên và mô tả – ưu tiên chuỗi đầy đủ
         const prodWhere = { status: 1 };
         if (tokens.length) {
+          const fullKeyword = keywordTrimmed.toLowerCase();
           prodWhere[Op.or] = [
+            { name: { [Op.like]: `%${fullKeyword}%` } },
+            { description: { [Op.like]: `%${fullKeyword}%` } },
             ...tokens.map(t => ({ name: { [Op.like]: `%${t}%` } })),
             ...tokens.map(t => ({ description: { [Op.like]: `%${t}%` } })),
           ];
         }
+
+        // === 🔍 BỔ SUNG: Tìm exact match theo tên đầy đủ (như trang so sánh) ===
+        if (keywordTrimmed) {
+          const fullMatch = await Product.findOne({
+            where: {
+              status: 1,
+              name: { [Op.like]: `%${keywordTrimmed}%` } // Tìm chuỗi con liền mạch
+            },
+            attributes: ['id'],
+            include: [{
+              model: Variant,
+              as: 'variants',
+              attributes: [],
+              required: true,
+              where: {
+                ...NON_AUCTION_WHERE,
+                stock: { [Op.gt]: 0 } // Chỉ sản phẩm có biến thể còn hàng
+              }
+            }],
+            raw: true
+          });
+
+          if (fullMatch) {
+            finalIds = [fullMatch.id]; // Ưu tiên tuyệt đối nếu tìm thấy
+            // Không cần chạy các bước tìm kiếm khác
+            return; // ❌ Không return, vì chúng ta muốn tiếp tục Step 2 & 3
+          }
+        }
+
         const prods = await Product.findAll({
           where: prodWhere,
           attributes: ['id'],
@@ -85,12 +130,12 @@ class SearchController {
         });
         const nameDescIds = prods.map(p => p.id);
 
-        // 1b. SKU – chỉ lấy variant bán thường
+        // 1b. Tìm theo SKU
         let skuIds = [];
         if (tokens.length) {
           const skus = await Variant.findAll({
             where: {
-              is_auction_only: 0,
+              ...NON_AUCTION_WHERE,
               sku: { [Op.or]: tokens.map(t => ({ [Op.like]: `%${t}%` })) }
             },
             attributes: ['product_id'],
@@ -99,7 +144,7 @@ class SearchController {
           skuIds = skus.map(v => v.product_id);
         }
 
-        // 1c. Attr value – chỉ variant bán thường
+        // 1c. Tìm theo giá trị thuộc tính
         let avIds = [];
         if (tokens.length) {
           const avs = await AttrValue.findAll({
@@ -117,12 +162,13 @@ class SearchController {
           avIds = avs.map(a => a['variant.product_id']);
         }
 
-        // 1d. Attr name – chỉ variant bán thường
+        // 1d. Tìm theo tên thuộc tính
         let anIds = [];
         if (tokens.length) {
           const atts = await Attribute.findAll({
             where: { [Op.or]: tokens.map(t => ({ name: { [Op.like]: `%${t}%` } })) },
-            attributes: ['id'], raw: true
+            attributes: ['id'],
+            raw: true
           });
           const ids = atts.map(a => a.id);
           if (ids.length) {
@@ -144,14 +190,20 @@ class SearchController {
 
         finalIds = Array.from(new Set([...nameDescIds, ...skuIds, ...avIds, ...anIds]));
         if (!finalIds.length) {
-          return res.json({ status: 200, message: 'Không tìm thấy', data: [], pagination: { page, limit, totalItems: 0, totalPages: 0 } });
+          return res.json({
+            status: 200,
+            message: 'Không tìm thấy sản phẩm nào',
+            data: [],
+            pagination: { page, limit, totalItems: 0, totalPages: 0 }
+          });
         }
 
-        // Step 2: lọc thêm theo attribute_filters – chỉ qua variant bán thường
+        // Step 2: Lọc theo bộ lọc thuộc tính (nếu có)
         if (attrIds.length || attrVals.length) {
           const avWhere = {};
           if (attrIds.length) avWhere.product_attribute_id = { [Op.in]: attrIds };
           if (attrVals.length) avWhere[Op.or] = attrVals.map(v => ({ value: { [Op.like]: `%${v}%` } }));
+
           const matches = await AttrValue.findAll({
             where: { ...avWhere, '$variant.product_id$': { [Op.in]: finalIds } },
             include: [{
@@ -164,36 +216,53 @@ class SearchController {
             attributes: [],
             raw: true
           });
+
           finalIds = Array.from(new Set(matches.map(m => m['variant.product_id'])));
           if (!finalIds.length) {
-            return res.json({ status: 200, message: 'Không tìm thấy thuộc tính phù hợp', data: [], pagination: { page, limit, totalItems: 0, totalPages: 0 } });
+            return res.json({
+              status: 200,
+              message: 'Không tìm thấy sản phẩm phù hợp với bộ lọc',
+              data: [],
+              pagination: { page, limit, totalItems: 0, totalPages: 0 }
+            });
           }
         }
       }
 
-      // Step 3: fetch data & paginate (variants chỉ là bán thường)
+      // Step 3: Lấy dữ liệu sản phẩm + biến thể còn hàng
       const totalItems = finalIds.length;
       const totalPages = Math.ceil(totalItems / limit);
       const pageIds = finalIds.slice(offset, offset + limit);
 
       const products = await Product.findAll({
         where: { id: pageIds },
+        attributes: ['id', 'name', 'description', 'thumbnail', 'slug'],
         include: [
           { model: Brand, as: 'brand', attributes: ['id', 'name'], where: { status: 1 }, required: true },
           { model: Category, as: 'category', attributes: ['id', 'name'] },
           {
             model: Variant,
             as: 'variants',
-            where: NON_AUCTION_WHERE,     // <-- chỉ lấy biến thể bán thường
+            where: {
+              ...NON_AUCTION_WHERE,
+              stock: { [Op.gt]: 0 } // Chỉ lấy biến thể còn hàng
+            },
             required: false,
             include: [
               { model: Img, as: 'images', attributes: ['id', 'image_url'] },
               { model: AttrValue, as: 'attributeValues', include: [{ model: Attribute, as: 'attribute', attributes: ['id', 'name'] }] },
               {
-                model: PromoProd, as: 'promotionProducts', required: false,
+                model: PromoProd,
+                as: 'promotionProducts',
+                required: false,
                 include: [{
-                  model: Promotion, as: 'promotion',
-                  where: { start_date: { [Op.lte]: now }, end_date: { [Op.gte]: now }, status: 'active' },
+                  model: Promotion,
+                  as: 'promotion',
+                  where: {
+                    start_date: { [Op.lte]: now },
+                    end_date: { [Op.gte]: now },
+                    status: 'active'
+                  },
                   required: false
                 }]
               }
@@ -203,41 +272,70 @@ class SearchController {
         order: [['name', 'ASC']]
       });
 
-      const data = products.map(p => ({
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        thumbnail: toUrl(p.thumbnail, req),
-        brand: p.brand?.name,
-        category: p.category?.name,
-        variants: (p.variants || []).map(v => {
-          const promo = v.promotionProducts?.[0]?.promotion;
-          let finalPrice = parseFloat(v.price);
-          if (promo) {
-            finalPrice = promo.discount_type === 'percentage'
-              ? finalPrice * (1 - parseFloat(promo.discount_value) / 100)
-              : finalPrice - parseFloat(promo.discount_value);
-          }
-          return {
-            id: v.id,
-            sku: v.sku,
-            price: parseFloat(v.price),
-            final_price: Math.max(finalPrice, 0),
-            images: (v.images || []).map(i => ({ id: i.id, image_url: toUrl(i.image_url, req) })),
-            attributes: (v.attributeValues || []).map(av => ({
-              id: av.attribute.id,
-              name: av.attribute.name,
-              value: av.value
-            })),
-            promotion: promo ? {
-              id: promo.id,
-              code: promo.code,
-              type: promo.discount_type,
-              value: parseFloat(promo.discount_value)
-            } : null
-          };
-        })
-      }));
+      // Sắp xếp lại theo độ phù hợp với từ khóa
+      const sortedProducts = products.sort((a, b) => {
+        const kw = keywordTrimmed.toLowerCase();
+        if (!kw) return 0;
+
+        const matchA = (
+          (a.name.toLowerCase() === kw ? 100 : 0) +
+          (a.name.toLowerCase().includes(kw) ? 50 : 0) +
+          (a.name.toLowerCase().split(kw).length - 1) * 10
+        );
+        const matchB = (
+          (b.name.toLowerCase() === kw ? 100 : 0) +
+          (b.name.toLowerCase().includes(kw) ? 50 : 0) +
+          (b.name.toLowerCase().split(kw).length - 1) * 10
+        );
+        return matchB - matchA;
+      });
+
+      const data = sortedProducts.map(p => {
+        // Sắp xếp variants: còn hàng lên trước
+        const sortedVariants = [...p.variants].sort((a, b) => {
+          if (a.stock > 0 && b.stock === 0) return -1;
+          if (a.stock === 0 && b.stock > 0) return 1;
+          return b.stock - a.stock; // ưu tiên stock cao hơn
+        });
+
+        return {
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description,
+          thumbnail: toUrl(p.thumbnail, req),
+          brand: p.brand?.name,
+          category: p.category?.name,
+          variants: sortedVariants.map(v => {
+            const promo = v.promotionProducts?.[0]?.promotion;
+            let finalPrice = parseFloat(v.price);
+            if (promo) {
+              finalPrice = promo.discount_type === 'percentage'
+                ? finalPrice * (1 - parseFloat(promo.discount_value) / 100)
+                : finalPrice - parseFloat(promo.discount_value);
+            }
+            return {
+              id: v.id,
+              sku: v.sku,
+              price: parseFloat(v.price),
+              final_price: Math.max(finalPrice, 0),
+              stock: v.stock, // ✅ Đảm bảo frontend nhận được stock
+              images: (v.images || []).map(i => ({ id: i.id, image_url: toUrl(i.image_url, req) })),
+              attributes: (v.attributeValues || []).map(av => ({
+                id: av.attribute.id,
+                name: av.attribute.name,
+                value: av.value
+              })),
+              promotion: promo ? {
+                id: promo.id,
+                code: promo.code,
+                type: promo.discount_type,
+                value: parseFloat(promo.discount_value)
+              } : null
+            };
+          })
+        };
+      });
 
       return res.json({
         status: 200,
@@ -248,7 +346,11 @@ class SearchController {
 
     } catch (err) {
       console.error('Search error:', err);
-      return res.status(500).json({ status: 500, message: 'Lỗi tìm kiếm', error: err.message });
+      return res.status(500).json({
+        status: 500,
+        message: 'Lỗi tìm kiếm',
+        error: err.message
+      });
     }
   }
 
@@ -272,7 +374,6 @@ class SearchController {
           'product_attribute_id'
         ],
         include: [
-          // chỉ lấy giá trị đang gắn với biến thể BÁN THƯỜNG
           {
             model: Variant,
             as: 'variant',
