@@ -239,6 +239,7 @@ class ClientCommentController {
           'order_detail_id',
           'parent_id',
           'rating',
+          'edited',
           'comment_text',
           'created_at',
           'updated_at'

@@ -138,7 +138,7 @@ class OrderController {
                                     {
                                         model: ProductModel,
                                         as: 'product',
-                                        attributes: ['id', 'name']
+                                        attributes: ['id', 'name','slug']
                                     },
                                     {
                                         model: VariantImageModel,
