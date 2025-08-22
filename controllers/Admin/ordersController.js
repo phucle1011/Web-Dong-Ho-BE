@@ -296,15 +296,15 @@ class OrderController {
                     console.error("Lỗi gửi email hủy đơn hàng:", emailError);
                 }
 
-               return res.status(200).json({
-  status: 200,
-  message: shouldRefund
-    ? `Đã hoàn tiền ${refundAmount.toLocaleString()} VNĐ vào ví và hủy đơn hàng.`
-    : "Hủy đơn hàng thành công (không hoàn tiền vì không đủ điều kiện).",
-  refundedAmount: shouldRefund ? refundAmount : 0,
-  orderStatus: order.status,
-  data: order,
-});
+                return res.status(200).json({
+                    status: 200,
+                    message: shouldRefund
+                        ? `Đã hoàn tiền ${refundAmount.toLocaleString()} VNĐ vào ví và hủy đơn hàng.`
+                        : "Hủy đơn hàng thành công (không hoàn tiền vì không đủ điều kiện).",
+                    refundedAmount: shouldRefund ? refundAmount : 0,
+                    orderStatus: order.status,
+                    data: order,
+                });
 
             }
 
@@ -336,7 +336,12 @@ class OrderController {
         }
     }
 
-    static async sendOrderCancellationEmail(order, user, customerEmail, cancellationReason) {
+    static async sendOrderCancellationEmail(
+        order,
+        user,
+        customerEmail,
+        cancellationReason
+    ) {
         try {
             let transporter = nodemailer.createTransport({
                 service: "gmail",
@@ -351,95 +356,116 @@ class OrderController {
                 hour12: false,
             });
 
-            const formattedTotal = new Intl.NumberFormat("vi-VN").format(order.total_price);
-            const formattedShipping = new Intl.NumberFormat("vi-VN").format(order.shipping_fee || 0);
-            const formattedDiscount = new Intl.NumberFormat("vi-VN").format(order.discount_amount || 0);
+            const formattedTotal = new Intl.NumberFormat("vi-VN").format(
+                order.total_price
+            );
+            const formattedShipping = new Intl.NumberFormat("vi-VN").format(
+                order.shipping_fee || 0
+            );
+            const formattedDiscount = new Intl.NumberFormat("vi-VN").format(
+                order.discount_amount || 0
+            );
+
+            const isOnlinePayment = ["vnpay", "momo"].includes(
+                order.payment_method?.toLowerCase()
+            );
 
             const htmlContent = `
-            <!DOCTYPE html>
-            <html lang="vi">
-            <head>
-                <meta charset="UTF-8" />
-                <title>Hủy đơn hàng</title>
-                <style>
-                    body {
-                        font-family: Arial, sans-serif;
-                        background: #f5f5f5;
-                        padding: 20px;
-                        color: #333;
-                    }
-                    .container {
-                        max-width: 500px;
-                        margin: auto;
-                        background: #fff;
-                        padding: 20px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    }
-                    .title {
-                        font-size: 18px;
-                        font-weight: bold;
-                        color: #d32f2f;
-                        margin-bottom: 16px;
-                    }
-                    .info {
-                        font-size: 14px;
-                        margin-bottom: 12px;
-                    }
-                    .info span {
-                        font-weight: bold;
-                    }
-                    .reason {
-                        font-style: italic;
-                        color: #555;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="title">Đơn hàng của bạn đã bị hủy</div>
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+            <meta charset="UTF-8" />
+            <title>Hủy đơn hàng</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    background: #f5f5f5;
+                    padding: 20px;
+                    color: #333;
+                }
+                .container {
+                    max-width: 500px;
+                    margin: auto;
+                    background: #fff;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                .title {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #d32f2f;
+                    margin-bottom: 16px;
+                }
+                .info {
+                    font-size: 14px;
+                    margin-bottom: 12px;
+                }
+                .info span {
+                    font-weight: bold;
+                }
+                .reason {
+                    font-style: italic;
+                    color: #555;
+                }
+                .refund-info {
+                    background: #fff8e1;
+                    padding: 12px;
+                    border-radius: 4px;
+                    margin: 16px 0;
+                    border-left: 4px solid #ffc107;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="title">Đơn hàng của bạn đã bị hủy</div>
     
-                    <div class="info"><span>Mã đơn hàng:</span> #${order.order_code}</div>
-                    <div class="info"><span>Khách hàng:</span> ${user?.name || "Không xác định"}</div>
-                    <div class="info"><span>Email:</span> ${user?.email || customerEmail}</div>
-                    <div class="info"><span>Ngày hủy:</span> ${formattedDate}</div>
-                    <div class="info"><span>Tổng tiền:</span> ${formattedTotal}₫</div>
+                <div class="info"><span>Mã đơn hàng:</span> #${order.order_code}</div>
+                <div class="info"><span>Khách hàng:</span> ${user?.name || "Không xác định"}</div>
+                <div class="info"><span>Email:</span> ${user?.email || customerEmail}</div>
+                <div class="info"><span>Ngày hủy:</span> ${formattedDate}</div>
+                <div class="info"><span>Tổng tiền:</span> ${formattedTotal}₫</div>
     
-                    ${order.discount_amount > 0
+                ${order.discount_amount > 0
                     ? `<div class="info"><span>Giảm giá:</span> -${formattedDiscount}₫</div>`
                     : ""
                 }
     
-                    ${order.shipping_fee > 0
+                ${order.shipping_fee > 0
                     ? `<div class="info"><span>Phí vận chuyển:</span> +${formattedShipping}₫</div>`
                     : ""
                 }
     
-                    <div class="info"><span>Lý do hủy:</span> <span class="reason">${cancellationReason || "Không có lý do cụ thể"}</span></div>
+                <div class="info"><span>Lý do hủy:</span> <span class="reason">${cancellationReason || "Không có lý do cụ thể"}</span></div>
     
-                    <p style="margin-top: 20px; font-size: 13px; color: #777;">
-                        Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ lại với chúng tôi. Cảm ơn bạn đã sử dụng dịch vụ.
-                    </p>
-
-                ${["momo", "vnpay"].includes(order.payment_method?.toLowerCase?.())
-                    ? `<p style="margin-top: 12px; font-size: 13px; color: #d32f2f;">
-                                Vì đơn hàng được thanh toán bằng <strong>${order.payment_method.toUpperCase()}</strong>, vui lòng liên hệ với chúng tôi để được hoàn tiền qua:
-                                <br />Email: <a href="mailto:phuclnhpc09097@gmail.com">phuclnhpc09097@gmail.com</a>
-                                <br />Zalo: <a href="https://zalo.me/0379169731" target="_blank">0379169731</a>
-                           </p>`
+                ${isOnlinePayment
+                    ? `<div class="refund-info">
+                      <p><strong>Thông tin hoàn tiền:</strong></p>
+                      <p>Đơn hàng này đã được thanh toán qua <strong>${order.payment_method.toUpperCase()}</strong>.</p>
+                      <p>Số tiền ${formattedTotal}₫ sẽ được hoàn trả vào tài khoản của bạn trễ nhất trong vòng 3-5 ngày tới.</p>
+                      <p>Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ với chúng tôi qua:</p>
+                      <ul>
+                        <li>Email: <a href="mailto:phuclnhpc09097@gmail.com">phuclnhpc09097@gmail.com</a></li>
+                        <li>Zalo: <a href="https://zalo.me/0379169731" target="_blank">0379169731</a></li>
+                      </ul>
+                    </div>`
                     : ""
                 }
-
-                </div>
-            </body>
-            </html>
-            `;
+    
+                <p style="margin-top: 20px; font-size: 13px; color: #777;">
+                    Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ lại với chúng tôi. Cảm ơn bạn đã sử dụng dịch vụ.
+                </p>
+            </div>
+        </body>
+        </html>
+        `;
 
             const mailOptions = {
                 from: `"Cửa hàng của bạn" <${process.env.EMAIL_USER}>`,
                 to: customerEmail,
                 subject: `Hủy đơn hàng #${order.order_code}`,
-                html: htmlContent
+                html: htmlContent,
             };
 
             await transporter.sendMail(mailOptions);
@@ -447,7 +473,6 @@ class OrderController {
             console.error("Lỗi gửi email hủy đơn hàng (chi tiết):", error);
             throw new Error("Không thể gửi email hủy đơn hàng.");
         }
-
     }
 
     static async delete(req, res) {

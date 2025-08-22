@@ -168,7 +168,7 @@ class OrderController {
         }
     }
 
-static async cancelOrder(req, res) {
+    static async cancelOrder(req, res) {
         const t = await sequelize.transaction();
         try {
             const { id } = req.params;
@@ -217,72 +217,72 @@ static async cancelOrder(req, res) {
                     );
                 }
             }
-const promoDetails = await OrderDetail.findAll({
-  where: {
-    order_id: order.id,
-    promotion_product_id: { [Op.ne]: null },
-    promotion_applied_qty: { [Op.gt]: 0 },
-  },
-  include: [
-    {
-      model: PromotionProductModel,
-      as: "promotionProduct",          // chỉnh alias cho đúng dự án bạn
-      attributes: ["id", "promotion_id"],
-      include: [
-        {
-          model: PromotionModel,
-          as: "promotion",             // alias đúng với association
-          attributes: ["id", "special_promotion"],
-        },
-      ],
-    },
-  ],
-  transaction: t,
-  lock: t.LOCK.UPDATE,
-});
+            const promoDetails = await OrderDetail.findAll({
+                where: {
+                    order_id: order.id,
+                    promotion_product_id: { [Op.ne]: null },
+                    promotion_applied_qty: { [Op.gt]: 0 },
+                },
+                include: [
+                    {
+                        model: PromotionProductModel,
+                        as: "promotionProduct",          // chỉnh alias cho đúng dự án bạn
+                        attributes: ["id", "promotion_id"],
+                        include: [
+                            {
+                                model: PromotionModel,
+                                as: "promotion",             // alias đúng với association
+                                attributes: ["id", "special_promotion"],
+                            },
+                        ],
+                    },
+                ],
+                transaction: t,
+                lock: t.LOCK.UPDATE,
+            });
 
-// 2) Gom tổng
-const promoTotals = new Map();     // promotion_id -> total qty
-const productTotals = new Map();   // promotion_product_id -> total qty
-const involvedPromotionIds = new Set();
+            // 2) Gom tổng
+            const promoTotals = new Map();     // promotion_id -> total qty
+            const productTotals = new Map();   // promotion_product_id -> total qty
+            const involvedPromotionIds = new Set();
 
-for (const d of promoDetails) {
-  const qty = Number(d.promotion_applied_qty || 0);
-  const pp = d.promotionProduct;
-  if (!pp || !qty) continue;
+            for (const d of promoDetails) {
+                const qty = Number(d.promotion_applied_qty || 0);
+                const pp = d.promotionProduct;
+                if (!pp || !qty) continue;
 
-  const promoId = pp.promotion_id || pp.promotion?.id;
-  if (!promoId) continue;
+                const promoId = pp.promotion_id || pp.promotion?.id;
+                if (!promoId) continue;
 
-  involvedPromotionIds.add(promoId);
-  promoTotals.set(promoId, (promoTotals.get(promoId) || 0) + qty);
-  productTotals.set(pp.id, (productTotals.get(pp.id) || 0) + qty);
-}
-// 3) Hoàn về Promotion.quantity, có bù trừ nếu trùng promo.id đã +1 ở block cũ
-for (const [promotion_id, totalQty] of promoTotals) {
-  const adjust = (promo && promotion_id === promo.id)
-    ? Math.max(totalQty - 1, 0)   // đã +1 ở block cũ → chỉ cộng thêm (tổng-1)
-    : totalQty;
+                involvedPromotionIds.add(promoId);
+                promoTotals.set(promoId, (promoTotals.get(promoId) || 0) + qty);
+                productTotals.set(pp.id, (productTotals.get(pp.id) || 0) + qty);
+            }
+            // 3) Hoàn về Promotion.quantity, có bù trừ nếu trùng promo.id đã +1 ở block cũ
+            for (const [promotion_id, totalQty] of promoTotals) {
+                const adjust = (promo && promotion_id === promo.id)
+                    ? Math.max(totalQty - 1, 0)   // đã +1 ở block cũ → chỉ cộng thêm (tổng-1)
+                    : totalQty;
 
-  if (adjust > 0) {
-    await PromotionModel.increment("quantity", {
-      by: adjust,
-      where: { id: promotion_id },
-      transaction: t,
-    });
-  }
-}
+                if (adjust > 0) {
+                    await PromotionModel.increment("quantity", {
+                        by: adjust,
+                        where: { id: promotion_id },
+                        transaction: t,
+                    });
+                }
+            }
 
-// 4) Hoàn về PromotionProduct.variant_quantity theo từng dòng
-for (const [promotion_product_id, byQty] of productTotals) {
-  await PromotionProductModel.increment("variant_quantity", {
-    by: byQty,
-    where: { id: promotion_product_id },
-    transaction: t,
-  });
-}
+            // 4) Hoàn về PromotionProduct.variant_quantity theo từng dòng
+            for (const [promotion_product_id, byQty] of productTotals) {
+                await PromotionProductModel.increment("variant_quantity", {
+                    by: byQty,
+                    where: { id: promotion_product_id },
+                    transaction: t,
+                });
+            }
 
-// 5) Mở lại PromotionUser.used=false cho các promotion khác (promo.id đã mở ở block cũ)
+            // 5) Mở lại PromotionUser.used=false cho các promotion khác (promo.id đã mở ở block cũ)
 
             order.status = "cancelled";
             order.cancellation_reason = cancellation_reason || null;
@@ -643,7 +643,7 @@ for (const [promotion_product_id, byQty] of productTotals) {
                 const variant = item.variant;
                 const promotion_product_id = item.promotion_product_id;
                 let promotionAppliedQty = 0;
-                let promotionProductIdToSave = null; 
+                let promotionProductIdToSave = null;
                 if (!variant) {
                     await t.rollback();
                     return res.status(400).json({ message: "Thiếu thông tin biến thể sản phẩm." });
@@ -665,52 +665,52 @@ for (const [promotion_product_id, byQty] of productTotals) {
                 }
 
 
-if (promotion_product_id) { 
-  const promoProd = await PromotionProductModel.findOne({
-    where: {
-      promotion_id: promotion_product_id,        
-      product_variant_id: variant.id,
-    },
-    transaction: t,
-    lock: t.LOCK.UPDATE,
-  });
+                if (promotion_product_id) {
+                    const promoProd = await PromotionProductModel.findOne({
+                        where: {
+                            promotion_id: promotion_product_id,
+                            product_variant_id: variant.id,
+                        },
+                        transaction: t,
+                        lock: t.LOCK.UPDATE,
+                    });
 
-  if (promoProd && promoProd.variant_quantity > 0) {
-    promotionAppliedQty = Math.min(promoProd.variant_quantity, item.quantity);
+                    if (promoProd && promoProd.variant_quantity > 0) {
+                        promotionAppliedQty = Math.min(promoProd.variant_quantity, item.quantity);
 
-    await promoProd.update(
-      { variant_quantity: promoProd.variant_quantity - promotionAppliedQty },
-      { transaction: t }
-    );
+                        await promoProd.update(
+                            { variant_quantity: promoProd.variant_quantity - promotionAppliedQty },
+                            { transaction: t }
+                        );
 
-    await PromotionModel.decrement(
-      { quantity: promotionAppliedQty },
-      {
-        where: { id: promoProd.promotion_id },     
-        transaction: t,
-      }
-    );
+                        await PromotionModel.decrement(
+                            { quantity: promotionAppliedQty },
+                            {
+                                where: { id: promoProd.promotion_id },
+                                transaction: t,
+                            }
+                        );
 
-    promotionProductIdToSave = promoProd.id;       
-  }
-}
+                        promotionProductIdToSave = promoProd.id;
+                    }
+                }
 
-const price = parseFloat(variant.price);
-totalPrice += price * item.quantity;
+                const price = parseFloat(variant.price);
+                totalPrice += price * item.quantity;
 
-detailedCart.push({
-  variant: variant.id,
-  name: variant.sku,
-  price,
-  quantity: item.quantity,
-  total: price * item.quantity,
-  auction_id: item.auction_id || null,
-  promotion_product_id: promotionProductIdToSave,  
-  promotion_applied_qty: promotionAppliedQty || 0, 
-});
+                detailedCart.push({
+                    variant: variant.id,
+                    name: variant.sku,
+                    price,
+                    quantity: item.quantity,
+                    total: price * item.quantity,
+                    auction_id: item.auction_id || null,
+                    promotion_product_id: promotionProductIdToSave,
+                    promotion_applied_qty: promotionAppliedQty || 0,
+                });
 
-productVariant.stock -= item.quantity;
-await productVariant.save({ transaction: t });
+                productVariant.stock -= item.quantity;
+                await productVariant.save({ transaction: t });
 
             }
 
@@ -843,14 +843,14 @@ await productVariant.save({ transaction: t });
             }, { transaction: t });
 
             const orderDetails = detailedCart.map(item => ({
-    order_id: newOrder.id,
-    product_variant_id: item.variant,
-    quantity: item.quantity,
-    price: item.price,
-    auction_id: item.auction_id,
-    promotion_product_id: item.promotion_product_id || null,
-    promotion_applied_qty: item.promotion_applied_qty || 0
-}));
+                order_id: newOrder.id,
+                product_variant_id: item.variant,
+                quantity: item.quantity,
+                price: item.price,
+                auction_id: item.auction_id,
+                promotion_product_id: item.promotion_product_id || null,
+                promotion_applied_qty: item.promotion_applied_qty || 0
+            }));
 
 
             await OrderDetail.bulkCreate(orderDetails, { transaction: t });
@@ -877,7 +877,7 @@ await productVariant.save({ transaction: t });
 
             return res.status(201).json({
                 success: true,
-                message: "Đặt hàng thành công.",
+                message: "Chúc mừng bạn đã đặt hàng thành công. Cảm ơn bạn đã ủng hộ chúng tôi!",
                 data: {
                     order: newOrder,
                     promotion_user_id: promoUser?.id || null,
@@ -1438,11 +1438,11 @@ await productVariant.save({ transaction: t });
 
             const saved = await RedisService.setData(redisKey, extraData, 86400);
 
-           if (!saved) {
-  console.error('[VNPAY] Redis SET failed:', redisKey);
-  return res.status(500).json({ success: false, message: 'Không thể lưu dữ liệu đơn hàng vào Redis' });
-}
-console.log('[VNPAY] Redis SET ok:', redisKey, 'returnUrl=', returnUrl);
+            if (!saved) {
+                console.error('[VNPAY] Redis SET failed:', redisKey);
+                return res.status(500).json({ success: false, message: 'Không thể lưu dữ liệu đơn hàng vào Redis' });
+            }
+            console.log('[VNPAY] Redis SET ok:', redisKey, 'returnUrl=', returnUrl);
 
             const minimalOrderInfo = {
                 orderId,
@@ -1509,7 +1509,6 @@ console.log('[VNPAY] Redis SET ok:', redisKey, 'returnUrl=', returnUrl);
     }
 
     static async handleVNPayCallback(req, res) {
-        console.log('[VNPAY] callback HIT', req.method, req.originalUrl, req.query?.vnp_TxnRef);
 
         let t;
         try {
@@ -1561,26 +1560,23 @@ console.log('[VNPAY] Redis SET ok:', redisKey, 'returnUrl=', returnUrl);
                 );
             }
 
-              console.log("[VNPAY] GET redisKey:", minimalInfo.redisKey); // log key
-            let decoded = await RedisService.getData(minimalInfo.redisKey); // dùng let để có thể gán lại
-            // Fallback: nếu key trong orderInfo lệch TxnRef thì thử key theo TxnRef
-           if (!decoded) {
-              const altKey = `order:${orderId}`;
-              if (altKey !== minimalInfo.redisKey) {
-                console.warn("[VNPAY] primary key miss -> try altKey:", altKey);
-               decoded = await RedisService.getData(altKey);
-                if (decoded) minimalInfo.redisKey = altKey;
-              }
-            }
-            // console.log("FRONTEND_URL:", process.env.FRONTEND_URL); // nếu cần log env
+            let decoded = await RedisService.getData(minimalInfo.redisKey);
             if (!decoded) {
-                 console.error("Không tìm thấy dữ liệu đơn hàng trong Redis");
-                 return res.redirect(
-                     `${process.env.FRONTEND_URL}/payment/failed?error=Order_data_expired&orderId=${orderId}`
-                 );
+                const altKey = `order:${orderId}`;
+                if (altKey !== minimalInfo.redisKey) {
+                    console.warn("[VNPAY] primary key miss -> try altKey:", altKey);
+                    decoded = await RedisService.getData(altKey);
+                    if (decoded) minimalInfo.redisKey = altKey;
                 }
+            }
+            if (!decoded) {
+                console.error("Không tìm thấy dữ liệu đơn hàng trong Redis");
+                return res.redirect(
+                    `${process.env.FRONTEND_URL}/payment/failed?error=Order_data_expired&orderId=${orderId}`
+                );
+            }
 
-t = await sequelize.transaction();
+            t = await sequelize.transaction();
 
             const {
                 user_id,
@@ -1840,14 +1836,19 @@ t = await sequelize.transaction();
                 console.error("Lỗi gửi email xác nhận đơn hàng:", mailErr);
             }
 
-             try {
-              await RedisService.deleteData(minimalInfo.redisKey);
-              console.log('[VNPAY] Redis DEL ok:', minimalInfo.redisKey);
-            } catch (e) {
-              console.error('[VNPAY] Redis DEL failed:', e.message);
-          }
+            try {
+                await RedisService.deleteData(minimalInfo.redisKey);
 
-            return res.redirect("https://web-dong-ho-fe.vercel.app/cart");
+            } catch (e) {
+                console.error('[VNPAY] Redis DEL failed:', e.message);
+            }
+
+            return res.json({
+                success: true,
+                redirectUrl: `${process.env.FRONTEND_URL}/cart`,
+                message: "Chúc mừng bạn đã đặt hàng thành công. Cảm ơn bạn đã ủng hộ chúng tôi!"
+            });
+
         } catch (error) {
             if (t && t.finished !== "commit") {
                 try {
