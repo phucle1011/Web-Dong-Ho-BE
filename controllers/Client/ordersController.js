@@ -1509,7 +1509,7 @@ class OrderController {
     }
 
     static async handleVNPayCallback(req, res) {
-
+        
         let t;
         try {
             const vnpParams = req.query;
@@ -1843,11 +1843,7 @@ class OrderController {
                 console.error('[VNPAY] Redis DEL failed:', e.message);
             }
 
-            return res.redirect(
-                `${process.env.FRONTEND_URL}/cart?success=true&orderId=${orderId}` +
-                `&message=${encodeURIComponent("Chúc mừng bạn đã đặt hàng thành công. Cảm ơn bạn đã ủng hộ chúng tôi!")}`
-            );
-
+            `${process.env.FRONTEND_URL}/cart`
         } catch (error) {
             if (t && t.finished !== "commit") {
                 try {
