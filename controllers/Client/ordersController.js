@@ -1843,11 +1843,10 @@ class OrderController {
                 console.error('[VNPAY] Redis DEL failed:', e.message);
             }
 
-            return res.json({
-                success: true,
-                redirectUrl: `${process.env.FRONTEND_URL}/cart`,
-                message: "Chúc mừng bạn đã đặt hàng thành công. Cảm ơn bạn đã ủng hộ chúng tôi!"
-            });
+            return res.redirect(
+                `${process.env.FRONTEND_URL}/cart?success=true&orderId=${orderId}` +
+                `&message=${encodeURIComponent("Chúc mừng bạn đã đặt hàng thành công. Cảm ơn bạn đã ủng hộ chúng tôi!")}`
+            );
 
         } catch (error) {
             if (t && t.finished !== "commit") {
