@@ -559,6 +559,10 @@ class OrderController {
 
             <p style="margin-top: 20px; font-size: 13px; color: #777;">
                 Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ lại với chúng tôi. Cảm ơn bạn đã sử dụng dịch vụ.
+                <ul>
+                        <li>Email: <a href="mailto:phuclnhpc09097@gmail.com">phuclnhpc09097@gmail.com</a></li>
+                        <li>Zalo: <a href="https://zalo.me/0379169731" target="_blank">0379169731</a></li>
+                      </ul>
             </p>
         </div>
     </body>

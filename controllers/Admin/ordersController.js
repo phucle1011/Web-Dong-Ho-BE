@@ -138,7 +138,7 @@ class OrderController {
                                     {
                                         model: ProductModel,
                                         as: 'product',
-                                        attributes: ['id', 'name','slug']
+                                        attributes: ['id', 'name', 'slug']
                                     },
                                     {
                                         model: VariantImageModel,
@@ -455,6 +455,10 @@ class OrderController {
     
                 <p style="margin-top: 20px; font-size: 13px; color: #777;">
                     Nếu bạn có bất kỳ thắc mắc nào, vui lòng liên hệ lại với chúng tôi. Cảm ơn bạn đã sử dụng dịch vụ.
+                    <ul>
+                        <li>Email: <a href="mailto:phuclnhpc09097@gmail.com">phuclnhpc09097@gmail.com</a></li>
+                        <li>Zalo: <a href="https://zalo.me/0379169731" target="_blank">0379169731</a></li>
+                      </ul>
                 </p>
             </div>
         </body>
@@ -665,13 +669,26 @@ class OrderController {
             const where = {};
 
             if (start_date && end_date) {
-                const start = new Date(`${start_date}T00:00:00+07:00`);
-                const end = new Date(`${end_date}T23:59:59+07:00`);
+                const start = new Date(`${start_date}T00:00:00`);
+                const end = new Date(`${end_date}T23:59:59`);
 
                 where.created_at = {
                     [Op.between]: [start, end],
                 };
             }
+
+            const buildVariantLabel = (variant) => {
+                if (!variant) return "";
+                if (variant.attributeValues?.length) {
+                    return variant.attributeValues
+                        .map((av) => {
+                            const attr = av.attribute?.name ? `${av.attribute.name}: ` : "";
+                            return `${attr}${av.value}`;
+                        })
+                        .join(", ");
+                }
+                return variant.sku || "";
+            };
 
             const orders = await OrderModel.findAll({
                 where,
@@ -685,7 +702,7 @@ class OrderController {
                             {
                                 model: ProductVariantsModel,
                                 as: 'variant',
-                                attributes: ['price'],
+                                attributes: ['price', 'sku'],
                                 include: [
                                     {
                                         model: ProductModel,
@@ -714,26 +731,43 @@ class OrderController {
                 { header: 'Ngày tạo', key: 'created_at', width: 20 },
                 { header: 'Trạng thái', key: 'status', width: 15 },
                 { header: 'Tổng tiền', key: 'total_price', width: 15 },
-                { header: 'Sản phẩm', key: 'products', width: 40 },
+                { header: 'Chi tiết sản phẩm', key: 'product_summary', width: 60 },
             ];
 
+            ['product_summary'].forEach(k => {
+                worksheet.getColumn(k).alignment = { wrapText: true };
+            });
+
             orders.forEach(order => {
-                const products = order.orderDetails.map(detail => {
-                    const name = detail.productVariant?.variantProduct?.name || '';
-                    const quantity = detail.quantity;
-                    return `${name} (x${quantity})`;
-                }).join(', ');
+                const productNames = order.orderDetails
+                    .map((detail) => {
+                        const name = detail?.variant?.product?.name || "(SP đã xoá)";
+                        return `${name} (x${detail.quantity})`;
+                    })
+                    .join("\n");
+
+                const variantLabels = order.orderDetails
+                    .map((detail) => buildVariantLabel(detail.variant))
+                    .join("\n");
+
+                const productSummary = order.orderDetails
+                    .map((detail) => {
+                        const name = detail?.variant?.product?.name || "(SP đã xoá)";
+                        const vlabel = buildVariantLabel(detail.variant);
+                        return `${name} (x${detail.quantity})` + (vlabel ? ` - ${vlabel}` : "");
+                    })
+                    .join("\n");
 
                 worksheet.addRow({
                     order_code: order.order_code,
                     customer_name: order.user?.name || '',
                     phone: order.user?.phone || '',
-                    created_at: new Date(order.created_at).toLocaleString('vi-VN', {
-                        timeZone: 'Asia/Ho_Chi_Minh',
-                    }),
+                    created_at: new Date(order.created_at).toISOString().slice(0, 19).replace('T', ' '),
                     status: order.status,
                     total_price: order.total_price,
-                    products,
+                    product_names: productNames,
+                    variant_labels: variantLabels,
+                    product_summary: productSummary,
                 });
             });
 
