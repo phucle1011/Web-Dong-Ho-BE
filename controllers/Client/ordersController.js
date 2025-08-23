@@ -694,24 +694,37 @@ class OrderController {
                         promotionProductIdToSave = promoProd.id;
                     }
                 }
+// === TÍNH GIÁ VÀ CỘNG TỔNG ===
+const unitPrice = Number(variant.price) || 0;                         // giá gốc / 1 sp
+const promoUnitPriceFromFE = Number(item.amount);                     // đơn giá KM FE gửi
+const promoQty = Number(promotionAppliedQty) || 0;                    // SL áp dụng KM
+const normalQty = Math.max(0, Number(item.quantity) - promoQty);      // SL còn lại tính giá gốc
 
-                const price = parseFloat(variant.price);
-                totalPrice += price * item.quantity;
+// Nếu FE không gửi amount hợp lệ, fallback về giá gốc
+const promoUnitPrice = (Number.isFinite(promoUnitPriceFromFE) && promoUnitPriceFromFE >= 0)
+  ? promoUnitPriceFromFE
+  : unitPrice;
 
-                detailedCart.push({
-                    variant: variant.id,
-                    name: variant.sku,
-                    price,
-                    quantity: item.quantity,
-                    total: price * item.quantity,
-                    auction_id: item.auction_id || null,
-                    promotion_product_id: promotionProductIdToSave,
-                    promotion_applied_qty: promotionAppliedQty || 0,
-                });
+// Tổng tiền dòng: phần KM + phần giá thường
+const lineTotal = (promoQty * promoUnitPrice) + (normalQty * unitPrice);
+totalPrice += lineTotal;
+                // Push chi tiết (giữ key cũ + bổ sung trường để theo dõi minh bạch)
+detailedCart.push({
+  variant: variant.id,
+  name: variant.sku,
+  price: unitPrice,                          // giá gốc (giữ nguyên key cũ)
+  quantity: item.quantity,
+  total: lineTotal,                           // tổng tiền đã tính theo 2 mức giá
+  auction_id: item.auction_id || null,
+  promotion_product_id: promotionProductIdToSave,
+  promotion_applied_qty: promoQty,            // SL áp dụng KM
+  promotion_unit_price: promoUnitPrice,       // đơn giá KM dùng để lưu
+  normal_qty: normalQty,                      // SL tính theo giá gốc (tham khảo)
+});
 
-                productVariant.stock -= item.quantity;
-                await productVariant.save({ transaction: t });
-
+// Trừ kho
+productVariant.stock -= item.quantity;
+await productVariant.save({ transaction: t });
             }
 
             let promoUser = null;
@@ -1641,45 +1654,87 @@ class OrderController {
                         `${process.env.FRONTEND_URL}/payment/failed?error=Product_not_found&productId=${item.variant_id}&orderId=${orderId}`
                     );
                 }
+                let price = parseFloat(productVariant.price);
+
                 if (promotion_product_id) {
-                    const promoProduct = await PromotionProductModel.findOne({
-                        where: {
-                            promotion_id: promotion_product_id,
-                            product_variant_id: item.variant_id,
-                        },
-                        transaction: t,
-                        lock: t.LOCK.UPDATE,
-                    });
+  const promoProd = await PromotionProductModel.findOne({
+    where: {
+      promotion_id: promotion_product_id,
+      product_variant_id: item.variant_id,
+    },
+    transaction: t,
+    lock: t.LOCK.UPDATE,
+  });
 
-                    if (promoProduct && promoProduct.variant_quantity > 0) {
-                        const deducted = Math.min(promoProduct.variant_quantity, item.quantity);
+  let promotionAppliedQty = 0;
+  let promotionProductIdToSave = null;
 
-                        // Trừ variant_quantity
-                        promoProduct.variant_quantity -= deducted;
-                        await promoProduct.save({ transaction: t });
+  if (promoProd && promoProd.variant_quantity > 0) {
+    promotionAppliedQty = Math.min(promoProd.variant_quantity, item.quantity);
 
-                        // Trừ promotion.quantity dựa trên số vừa trừ từ variant
-                        await PromotionModel.decrement(
-                            { quantity: deducted },
-                            {
-                                where: { id: promotion_product_id },
-                                transaction: t,
-                            }
-                        );
-                    }
-                }
+    await promoProd.update(
+      { variant_quantity: promoProd.variant_quantity - promotionAppliedQty },
+      { transaction: t }
+    );
 
-                const price = parseFloat(productVariant.price);
-                totalPrice += price * item.quantity;
+    await PromotionModel.decrement(
+      { quantity: promotionAppliedQty },
+      {
+        where: { id: promoProd.promotion_id },
+        transaction: t,
+      }
+    );
 
-                detailedCart.push({
-                    product_id: item.variant_id,
-                    name: productVariant.sku,
-                    price: price,
-                    quantity: item.quantity,
-                    total: price * item.quantity,
-                    auction_id: item.auction_id || null,
-                });
+    promotionProductIdToSave = promoProd.id;
+
+  
+  }
+  
+  // dùng đơn giá KM do FE gửi (item.amount); nếu không hợp lệ thì fallback về price
+const promoUnitPriceFromFE = Number(item.amount);
+const promoUnitPrice = (Number.isFinite(promoUnitPriceFromFE) && promoUnitPriceFromFE >= 0)
+  ? promoUnitPriceFromFE
+  : Number(price);
+
+// tách SL: phần KM + phần giá gốc
+const promoQty = Number(promotionAppliedQty) || 0;
+const totalQty = Number(item.quantity) || 0;
+const normalQty = Math.max(0, totalQty - promoQty);
+
+// tổng tiền dòng theo 2 mức giá
+const lineTotal = (promoQty * promoUnitPrice) + (normalQty * Number(price));
+totalPrice += lineTotal;
+
+detailedCart.push({
+  variant: item.variant_id,
+  name: productVariant.sku,
+  price: Number(price),                 // giữ giá gốc để tương thích
+  quantity: totalQty,
+  total: lineTotal,                     // tổng thực thu
+  auction_id: item.auction_id || null,
+  promotion_product_id: promotionProductIdToSave,
+  promotion_applied_qty: promoQty,      // SL áp KM
+  promotion_unit_price: promoUnitPrice, // đơn giá KM dùng để tính
+  normal_qty: normalQty,                // SL tính giá gốc
+});
+} else {
+const unitPrice = Number(price);
+const totalQty = Number(item.quantity) || 0;
+const lineTotal = unitPrice * totalQty;
+totalPrice += lineTotal;
+
+detailedCart.push({
+  variant: item.variant_id,
+  name: productVariant.sku,
+  price: unitPrice,
+  quantity: totalQty,
+  total: lineTotal,
+  auction_id: item.auction_id || null,
+  promotion_applied_qty: 0,
+  normal_qty: totalQty,
+});
+}
+ 
 
                 emailProducts.push({
                     quantity: item.quantity,
@@ -1690,7 +1745,7 @@ class OrderController {
                         name: productVariant?.product?.name || productVariant.sku
                     }
                 });
-
+                
                 if (productVariant.stock < item.quantity) {
                     await t.rollback();
                     return res.redirect(
@@ -1700,7 +1755,7 @@ class OrderController {
                 productVariant.stock -= item.quantity;
                 await productVariant.save({ transaction: t });
             }
-
+ 
             if (promotion) {
                 const normalPromotion = await PromotionModel.findByPk(promotion, {
                     transaction: t,
@@ -1727,6 +1782,7 @@ class OrderController {
                 }
             }
 
+  
             let promoUser = null;
             if (promotion_user_id) {
                 promoUser = await PromotionUserModel.findOne({
@@ -1778,7 +1834,7 @@ class OrderController {
                     `${process.env.FRONTEND_URL}/payment/failed?error=Missing_shipping_address&orderId=${orderId}`
                 );
             }
-
+           
             const newOrder = await OrderModel.create(
                 {
                     user_id,
@@ -1805,12 +1861,15 @@ class OrderController {
             );
 
             const orderDetails = detailedCart.map((item) => ({
-                order_id: newOrder.id,
-                product_variant_id: item.product_id,
+  order_id: newOrder.id,
+                product_variant_id: item.variant,
                 quantity: item.quantity,
                 price: item.price,
-                auction_id: item.auction_id
-            }));
+                auction_id: item.auction_id,
+  promotion_product_id: item.promotion_product_id || null,  // lưu id khuyến mãi nếu có
+  promotion_applied_qty: item.promotion_applied_qty || 0,   // lưu số lượng áp dụng
+}));
+
             await OrderDetail.bulkCreate(orderDetails, { transaction: t });
 
             const successfullyOrderedProductIds = products.map((p) => p.variant_id || p.variant_id);
@@ -1845,18 +1904,33 @@ class OrderController {
 
             `${process.env.FRONTEND_URL}/cart`
         } catch (error) {
-            if (t && t.finished !== "commit") {
-                try {
-                    await t.rollback();
-                } catch (rbErr) {
-                    console.error("Rollback error:", rbErr);
-                }
-            }
-            const orderId = req.query.vnp_TxnRef || "unknown";
-            return res.redirect(
-                `${process.env.FRONTEND_URL}/payment/failed?error=Server_error&orderId=${orderId}`
-            );
-        }
+  // Luôn có orderId để bám logs
+  const orderId = req.query?.vnp_TxnRef || "unknown";
+
+  // Gắn mã theo dõi đơn giản
+  const errCode = `${error?.name || "Error"}:${(error?.message || "").slice(0,60)}`;
+
+  console.error("==== [VNPAY CALLBACK ERROR] ====");
+  console.error("orderId:", orderId);
+  console.error("name   :", error?.name);
+  console.error("message:", error?.message);
+  console.error("stack  :", error?.stack);
+  console.error("===============================");
+
+  // Nếu transaction chưa commit thì rollback an toàn
+  if (t && t.finished !== "commit") {
+    try {
+      await t.rollback();
+    } catch (rbErr) {
+      console.error("[VNPAY] Rollback error:", rbErr);
+    }
+  }
+
+  // Đẩy thêm code ra FE để lần sau nhìn URL biết nhóm lỗi nào
+  return res.redirect(
+    `${process.env.FRONTEND_URL}/payment/failed?error=Server_error&code=${encodeURIComponent(errCode)}&orderId=${orderId}`
+  );
+}
     }
 
     static async sendOrderConfirmationEmail(
