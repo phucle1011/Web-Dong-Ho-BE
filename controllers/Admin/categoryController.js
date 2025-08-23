@@ -49,7 +49,7 @@ class CategoryController {
 
   static async create(req, res) {
     let { name, slug, description, status } = req.body;
-    if (!name || !description) {
+    if (!name) {
       return res.status(400).json({ status: 400, message: "Tên và mô tả danh mục là bắt buộc.", });
     }
     const normalizedName = name.trim().replace(/\s+/g, " ").toLowerCase();
@@ -62,7 +62,7 @@ class CategoryController {
       if (existingCategory) {
         return res.status(409).json({ status: 409, message: "Tên danh mục đã tồn tại.", });
       }
-      const newCategory = await CategoryModel.create({ name: normalizedName, slug, description, status, });
+      const newCategory = await CategoryModel.create({ name: normalizedName, slug, description: description?.trim() || null, status, });
       return res.status(201).json({ status: 201, message: "Thêm danh mục thành công.", data: newCategory, });
     } catch (error) {
       console.error("Lỗi khi thêm danh mục:", error);
