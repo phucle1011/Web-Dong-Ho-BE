@@ -238,62 +238,67 @@ class BrandController {
     }
   }
   static async getTopBrands(req, res) {
-    try {
-      const topBrands = await ProductModel.findAll({
-        where: {
-          status: 1,
-          publication_status: "published",
+  try {
+    const topBrands = await ProductModel.findAll({
+      where: {
+        status: 1,
+        publication_status: "published",
+      },
+      attributes: [
+        "brand_id",
+        // Đếm distinct product id để tránh trùng do nhiều biến thể
+        [Sequelize.literal("COUNT(DISTINCT `products`.`id`)"), "productCount"],
+      ],
+      include: [
+        // Chỉ lấy brand đang active
+        {
+          model: BrandModel,
+          as: "brand",
+          attributes: ["id", "name", "slug", "country", "logo", "description"],
+          where: { status: "active" },
+          required: true,
         },
-        attributes: [
-          "brand_id",
-          [Sequelize.fn("COUNT", Sequelize.col("products.id")), "productCount"], 
-        ],
-        include: [
-          {
-            model: BrandModel,
-            as: "brand",
-            attributes: [
-              "id",
-              "name",
-              "slug",
-              "country",
-              "logo",
-              "description",
-            ],
-            where: { status: "active" },
-          },
-        ],
-        group: ["brand_id", "brand.id"],
-        order: [[Sequelize.literal("productCount"), "DESC"]],
-        limit: 10,
-      });
+        // ⬇️ BẮT BUỘC product phải có ÍT NHẤT 1 biến thể KHÔNG đấu giá
+        {
+          model: ProductVariantModel,
+          as: "variants",
+          attributes: [],
+          where: { is_auction_only: false },
+          required: true,
+        },
+      ],
+      group: ["brand_id", "brand.id"],
+      order: [[Sequelize.literal("productCount"), "DESC"]],
+      limit: 10,
+      subQuery: false, // tránh subquery gây alias khó chịu
+    });
 
-      const formatted = topBrands.map((item) => ({
-        id: item.brand.id,
-        name: item.brand.name,
-        slug: item.brand.slug,
-        country: item.brand.country,
-        logo: item.brand.logo,
-        description: item.brand.description,
-        productCount: item.dataValues.productCount,
-      }));
+    const formatted = topBrands.map((item) => ({
+      id: item.brand.id,
+      name: item.brand.name,
+      slug: item.brand.slug,
+      country: item.brand.country,
+      logo: item.brand.logo,
+      description: item.brand.description,
+      productCount: Number(item.get("productCount")) || 0,
+    }));
 
-      return res.status(200).json({
-        status: 200,
-        message:
-          formatted.length === 0
-            ? "Không tìm thấy thương hiệu."
-            : "Lấy top thương hiệu thành công",
-        data: formatted,
-      });
-    } catch (error) {
-      console.error("Lỗi khi lấy top thương hiệu:", error);
-      return res.status(500).json({
-        status: 500,
-        error: error.message,
-      });
-    }
+    return res.status(200).json({
+      status: 200,
+      message:
+        formatted.length === 0
+          ? "Không tìm thấy thương hiệu có sản phẩm thường."
+          : "Lấy top thương hiệu thành công",
+      data: formatted,
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy top thương hiệu:", error);
+    return res.status(500).json({ status: 500, error: error.message });
   }
+}
+
+
+
 }
 
 module.exports = BrandController;
