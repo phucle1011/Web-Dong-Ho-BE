@@ -1,6 +1,6 @@
 const BrandModel = require('../../models/brandsModel');
 const ProductModel = require('../../models/productsModel');
-const ProductVariantModel = require('../../models/productVariantsModel'); // ✅ thêm import
+const ProductVariantModel = require('../../models/productVariantsModel');
 const { Op } = require('sequelize');
 
 class brandClientController {
@@ -10,7 +10,7 @@ class brandClientController {
       const limit = parseInt(req.query.limit) || 10;
       const offset = (page - 1) * limit;
 
-      const { status = 'active', searchTerm } = req.query;
+      const { status = 'active', searchTerm, hasProduct = true } = req.query;
       const whereClause = {};
 
       // 🔎 Tìm theo tên/country
@@ -27,18 +27,18 @@ class brandClientController {
         whereClause.status = status;
       }
 
-      // ❗ Quan trọng: chỉ giữ brand có ÍT NHẤT 1 sản phẩm
-      // mà sản phẩm đó có ÍT NHẤT 1 biến thể thường (is_auction_only = 0)
-      const { count, rows } = await BrandModel.findAndCountAll({
-        where: whereClause,
-        include: [
+      let includeOptions = [];
+      
+      // Nếu cần lọc brand có sản phẩm (mặc định là true)
+      if (hasProduct === 'true' || hasProduct === true) {
+        includeOptions = [
           {
             model: ProductModel,
             as: 'products',
-            required: true,          // inner join -> brand phải có product
-            attributes: [],          // không trả danh sách product
+            required: true,
+            attributes: [],
             where: {
-              // (tuỳ bạn) có thể thêm điều kiện product status/publication nếu cần
+              // Thêm điều kiện product nếu cần
               // status: 'active',
               // publication_status: 'published',
             },
@@ -46,23 +46,31 @@ class brandClientController {
               {
                 model: ProductVariantModel,
                 as: 'variants',
-                required: true,       // inner join -> product phải có variant thường
+                required: true,
                 attributes: [],
-                where: { is_auction_only: 0 }, // ✅ chỉ nhận biến thể thường
-              },
-            ],
-          },
-        ],
-        order: [['created_at', 'DESC']],
+                where: {
+                  // ✅ Lấy tất cả biến thể KHÔNG PHẢI đấu giá
+                  is_auction_only: 0
+                }
+              }
+            ]
+          }
+        ];
+      }
+
+      const { count, rows } = await BrandModel.findAndCountAll({
+        where: whereClause,
+        include: includeOptions,
+        order: [['name', 'ASC']], // Sắp xếp theo tên để nhất quán
         limit,
         offset,
-        distinct: true, // count chính xác khi có include
-        subQuery: false, // giúp tối ưu kèm limit/offset + include sâu
+        distinct: true,
+        subQuery: false,
       });
 
       return res.status(200).json({
         status: 200,
-        message: 'Lấy danh sách thương hiệu có (ít nhất 1) biến thể thường thành công',
+        message: 'Lấy danh sách thương hiệu thành công',
         data: rows,
         pagination: {
           total: count,
