@@ -437,31 +437,62 @@ class PromotionProductController {
       }
 
       // Kiểm tra tổng số biến thể không vượt quá promotion.quantity
-      await sequelize.transaction(async (t) => {
-        const groupedByPromo = {};
+ // KIỂM TRA TỔNG variant_quantity THEO PROMOTION KHÔNG VƯỢT QUÁ promotion.quantity
+await sequelize.transaction(async (t) => {
+  // 1) Nhóm các payload theo promotion_id
+  const groupedByPromo = {};
+  for (const item of filteredPayloads) {
+    if (!groupedByPromo[item.promotion_id]) groupedByPromo[item.promotion_id] = [];
+    groupedByPromo[item.promotion_id].push(item);
+  }
 
-        for (const item of filteredPayloads) {
-          if (!groupedByPromo[item.promotion_id])
-            groupedByPromo[item.promotion_id] = [];
-          groupedByPromo[item.promotion_id].push(item);
-        }
+  // 2) Lấy tổng đã phân bổ trước đó cho các promotion liên quan, khóa hàng để tránh race
+  const allocByPromoRows = await PromotionProductModel.findAll({
+    where: { promotion_id: Object.keys(groupedByPromo).map((id) => parseInt(id)) },
+    attributes: [
+      'promotion_id',
+      [sequelize.fn('SUM', sequelize.col('variant_quantity')), 'used_qty'],
+    ],
+    group: ['promotion_id'],
+    raw: true,
+    transaction: t,
+    lock: t.LOCK.UPDATE, // đảm bảo an toàn khi nhiều request cùng lúc
+  });
 
-        for (const [promoId, items] of Object.entries(groupedByPromo)) {
-          const promo = promotions.find((p) => p.id === parseInt(promoId));
-          const totalVariants = items.length;
+  const usedByPromo = {};
+  allocByPromoRows.forEach((r) => {
+    usedByPromo[parseInt(r.promotion_id)] = parseInt(r.used_qty) || 0;
+  });
 
-          if (totalVariants > promo.quantity) {
-            throw new Error(
-              `Số biến thể (${totalVariants}) vượt quá số lượng còn lại (${promo.quantity}) của khuyến mãi ${promoId}`
-            );
-          }
-        }
+  // 3) Với mỗi promotion, tính tổng yêu cầu mới và so sánh với quota (quantity) còn lại
+  for (const [promoIdStr, items] of Object.entries(groupedByPromo)) {
+    const promoId = parseInt(promoIdStr);
 
-        // Lưu dữ liệu
-        await PromotionProductModel.bulkCreate(filteredPayloads, {
-          transaction: t,
-        });
-      });
+    // tổng variant_quantity đang yêu cầu cho promotion này
+    const requestedQty = items.reduce((sum, it) => sum + (parseInt(it.variant_quantity) || 0), 0);
+
+    // promo lấy từ danh sách promotions đã query phía trên
+    const promo = promotions.find((p) => p.id === promoId);
+    if (!promo) {
+      throw new Error(`Không tìm thấy khuyến mãi #${promoId}`);
+    }
+
+    
+
+    const usedQty = usedByPromo[promoId] || 0;
+    const remaining = Math.max(0, (parseInt(promo.quantity) || 0) - usedQty);
+
+    if (requestedQty > remaining) {
+      throw new Error(
+        `Tổng số lượt yêu cầu (${requestedQty}) vượt quá số lượt còn lại (${remaining}) của khuyến mãi #${promoId}`
+      );
+    }
+  }
+
+  // 4) Lưu dữ liệu vì tất cả promotion đều còn đủ quota
+  await PromotionProductModel.bulkCreate(filteredPayloads, { transaction: t });
+});
+
 
       const data = await PromotionProductModel.findAll({
         where: { promotion_id: promotionIds },
@@ -486,183 +517,434 @@ class PromotionProductController {
     }
   }
 
-  static async update(req, res) {
-    const t = await sequelize.transaction();
-    try {
-      const { promotion_id, products } = req.body;
+  // static async update(req, res) {
+  //   const t = await sequelize.transaction();
+  //   try {
+  //     const { promotion_id, products } = req.body;
 
-      // 0) Validate payload
-      if (!promotion_id || !Array.isArray(products) || products.length === 0) {
-        await t.rollback();
-        return res.status(400).json({ message: "Thiếu thông tin cập nhật." });
-      }
+  //     // 0) Validate payload
+  //     if (!promotion_id || !Array.isArray(products) || products.length === 0) {
+  //       await t.rollback();
+  //       return res.status(400).json({ message: "Thiếu thông tin cập nhật." });
+  //     }
 
-      // 1) Promotion
-      const promo = await PromotionModel.findByPk(promotion_id, {
-        transaction: t,
+  //     // 1) Promotion
+  //     const promo = await PromotionModel.findByPk(promotion_id, {
+  //       transaction: t,
+  //     });
+  //     if (!promo) {
+  //       await t.rollback();
+  //       return res.status(404).json({ message: "Promotion không tồn tại." });
+  //     }
+
+  //     // Kiểm tra số lượng biến thể không vượt quá promo.quantity
+  //     if (promo.quantity !== null && promo.quantity !== undefined) {
+  //       if (products.length > promo.quantity) {
+  //         await t.rollback();
+  //         return res.status(400).json({
+  //           message: `Số biến thể (${products.length}) vượt quá số lượng tối đa cho phép (${promo.quantity}).`,
+  //         });
+  //       }
+  //     }
+
+  //     // 2) Chuẩn hóa dữ liệu products
+  //     const variantIds = products.map((p) => Number(p.product_variant_id));
+  //     const quantities = products.map((p) => Number(p.variant_quantity));
+
+  //     if (
+  //       variantIds.some((id) => !Number.isFinite(id) || id <= 0) ||
+  //       quantities.some((q) => !Number.isFinite(q) || q < 0)
+  //     ) {
+  //       await t.rollback();
+  //       return res
+  //         .status(400)
+  //         .json({ message: "ID biến thể phải > 0 và số lượng phải ≥ 0." });
+  //     }
+  //     const rows = products
+  //       .map((item) => ({
+  //         promotion_id,
+  //         product_variant_id: Number(item.product_variant_id),
+  //         variant_quantity: Number(item.variant_quantity),
+  //       }))
+  //       .filter((row) => row.variant_quantity >= 0); // giữ 0 nếu muốn “đánh dấu hết lượt”
+  //     await PromotionProductModel.destroy({
+  //       where: { promotion_id },
+  //       transaction: t,
+  //     });
+  //     await PromotionProductModel.bulkCreate(rows, { transaction: t });
+
+  //     // 3) Lấy variants (kèm Product published)
+  //     const variants = await ProductVariantsModel.findAll({
+  //       where: { id: variantIds },
+  //       include: [
+  //         {
+  //           model: ProductModel,
+  //           as: "product",
+  //           attributes: ["id", "publication_status"],
+  //           required: true,
+  //           where: { publication_status: "published" },
+  //         },
+  //       ],
+  //       attributes: ["id", "stock", "price", "sku"],
+  //       transaction: t,
+  //     });
+
+  //     if (variants.length !== variantIds.length) {
+  //       const foundIds = variants.map((v) => v.id);
+  //       const missing = variantIds.filter((id) => !foundIds.includes(id));
+  //       await t.rollback();
+  //       return res.status(400).json({
+  //         message: `Các biến thể không hợp lệ hoặc thuộc sản phẩm chưa xuất bản: ${missing.join(
+  //           ", "
+  //         )}`,
+  //       });
+  //     }
+
+  //     // Map id -> info
+  //     const vm = {};
+  //     variants.forEach((v) => {
+  //       vm[v.id] = {
+  //         stock: Number(v.stock || 0),
+  //         price: Number.parseFloat(v.price || 0),
+  //         sku: v.sku || "N/A",
+  //       };
+  //     });
+
+  //     // 4) Validate từng item: tồn kho, finalPrice > 0, min_price_threshold
+  //     for (const item of products) {
+  //       const vid = Number(item.product_variant_id);
+  //       const qty = Number(item.variant_quantity);
+
+  //       const v = vm[vid];
+  //       if (!v) {
+  //         await t.rollback();
+  //         return res
+  //           .status(400)
+  //           .json({ message: `Không tìm thấy biến thể ID ${vid}.` });
+  //       }
+
+  //       // 4a) Stock
+  //       if (qty > v.stock) {
+  //         await t.rollback();
+  //         return res.status(400).json({
+  //           message: `Số lượt áp dụng (${qty}) vượt quá tồn kho (${v.stock}) cho SKU ${v.sku}.`,
+  //         });
+  //       }
+
+  //       // 4b) min_price_threshold (nếu có)
+  //       if (promo.min_price_threshold != null) {
+  //         const minThreshold = Number(promo.min_price_threshold);
+  //         if (Number.isFinite(minThreshold) && v.price < minThreshold) {
+  //           await t.rollback();
+  //           return res.status(400).json({
+  //             message: `SKU ${v.sku} có giá (${v.price.toLocaleString(
+  //               "vi-VN"
+  //             )}₫) nhỏ hơn ngưỡng tối thiểu (${minThreshold.toLocaleString(
+  //               "vi-VN"
+  //             )}₫).`,
+  //           });
+  //         }
+  //       }
+
+  //       // 4c) finalPrice > 0 theo loại discount
+  //       if (promo.discount_type === "percentage") {
+  //         const finalPrice =
+  //           v.price * (1 - Number(promo.discount_value || 0) / 100);
+  //         if (finalPrice <= 0) {
+  //           await t.rollback();
+  //           return res.status(400).json({
+  //             message: `Sau khi giảm ${promo.discount_value}% biến thể SKU ${v.sku} có giá <= 0.`,
+  //           });
+  //         }
+  //       } else if (promo.discount_type === "fixed") {
+  //         const finalPrice = v.price - Number(promo.discount_value || 0);
+  //         if (finalPrice <= 0) {
+  //           await t.rollback();
+  //           return res.status(400).json({
+  //             message: `Giảm cố định ${promo.discount_value}₫ làm SKU ${v.sku} có giá <= 0.`,
+  //           });
+  //         }
+  //       }
+  //     }
+
+  //     // 5) Cập nhật promotion_products: xóa hết & tạo mới
+  //     await PromotionProductModel.destroy({
+  //       where: { promotion_id },
+  //       transaction: t,
+  //     });
+
+  //     await PromotionProductModel.bulkCreate(
+  //       products.map((item) => ({
+  //         promotion_id,
+  //         product_variant_id: Number(item.product_variant_id),
+  //         variant_quantity: Number(item.variant_quantity),
+  //       })),
+  //       { transaction: t }
+  //     );
+
+  //     await t.commit();
+
+  //     return res.status(200).json({
+  //       message: "Cập nhật khuyến mãi thành công!",
+  //       totalApplied: products.length,
+  //     });
+  //   } catch (err) {
+  //     await t.rollback();
+  //     console.error("Lỗi khi cập nhật khuyến mãi:", err);
+  //     return res.status(500).json({ message: err.message || "Có lỗi xảy ra." });
+  //   }
+  // }
+static async update(req, res) {
+  const t = await sequelize.transaction();
+  try {
+    const { promotion_id, products } = req.body;
+
+    // 0) Validate payload cơ bản
+    if (!promotion_id || !Array.isArray(products) || products.length === 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Thiếu thông tin cập nhật." });
+    }
+
+    const promoId = Number(promotion_id);
+    if (!Number.isFinite(promoId) || promoId <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "promotion_id không hợp lệ." });
+    }
+
+    // 1) Lấy promotion + LOCK để tuần tự hóa
+    const promo = await PromotionModel.findByPk(promoId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (!promo) {
+      await t.rollback();
+      return res.status(404).json({ message: "Promotion không tồn tại." });
+    }
+
+    const promoQuota = parseInt(promo.quantity, 10);
+    if (!Number.isFinite(promoQuota) || promoQuota < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Giá trị quantity của promotion không hợp lệ." });
+    }
+
+    // 2) TÍNH QUOTA YÊU CẦU & CHUẨN HÓA ROWS
+    const rows = products.map((item) => ({
+      promotion_id: promoId,
+      product_variant_id: Number(item.product_variant_id),
+      variant_quantity: Number(item.variant_quantity),
+    }));
+
+    // Kiểm tra trùng lặp biến thể
+    const variantIdCounts = {};
+    rows.forEach((r) => {
+      variantIdCounts[r.product_variant_id] = (variantIdCounts[r.product_variant_id] || 0) + 1;
+    });
+    const duplicates = Object.entries(variantIdCounts)
+      .filter(([_, count]) => count > 1)
+      .map(([id]) => id);
+    if (duplicates.length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: `Payload chứa biến thể trùng lặp: ${duplicates.join(", ")}`,
       });
-      if (!promo) {
-        await t.rollback();
-        return res.status(404).json({ message: "Promotion không tồn tại." });
-      }
+    }
 
-      // Kiểm tra số lượng biến thể không vượt quá promo.quantity
-      if (promo.quantity !== null && promo.quantity !== undefined) {
-        if (products.length > promo.quantity) {
-          await t.rollback();
-          return res.status(400).json({
-            message: `Số biến thể (${products.length}) vượt quá số lượng tối đa cho phép (${promo.quantity}).`,
-          });
-        }
-      }
+    const totalRequested = rows.reduce((sum, r) => {
+      const vq = Number(r.variant_quantity);
+      return sum + (Number.isFinite(vq) ? vq : 0);
+    }, 0);
 
-      // 2) Chuẩn hóa dữ liệu products
-      const variantIds = products.map((p) => Number(p.product_variant_id));
-      const quantities = products.map((p) => Number(p.variant_quantity));
+    if (!Number.isFinite(totalRequested) || totalRequested < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Tổng variant_quantity không hợp lệ." });
+    }
 
-      if (
-        variantIds.some((id) => !Number.isFinite(id) || id <= 0) ||
-        quantities.some((q) => !Number.isFinite(q) || q < 0)
-      ) {
-        await t.rollback();
-        return res
-          .status(400)
-          .json({ message: "ID biến thể phải > 0 và số lượng phải ≥ 0." });
-      }
-      const rows = products
-        .map((item) => ({
-          promotion_id,
-          product_variant_id: Number(item.product_variant_id),
-          variant_quantity: Number(item.variant_quantity),
-        }))
-        .filter((row) => row.variant_quantity >= 0); // giữ 0 nếu muốn “đánh dấu hết lượt”
-      await PromotionProductModel.destroy({
-        where: { promotion_id },
-        transaction: t,
+    // ✅ LỚP AN TOÀN #1: quota trước khi ghi
+    if (totalRequested > promoQuota) {
+      const overQuotaVariants = rows
+        .filter((r) => r.variant_quantity > 0)
+        .map((r) => `Biến thể ${r.product_variant_id}: ${r.variant_quantity} lượt`);
+      await t.rollback();
+      return res.status(400).json({
+        message: `Tổng số lượt yêu cầu (${totalRequested}) vượt quá số lượt tối đa (${promoQuota}) của khuyến mãi.`,
+        details: overQuotaVariants.length > 0 ? overQuotaVariants : ["Không có biến thể nào được yêu cầu."],
+        remaining: Math.max(0, promoQuota - totalRequested),
       });
-      await PromotionProductModel.bulkCreate(rows, { transaction: t });
+    }
 
-      // 3) Lấy variants (kèm Product published)
-      const variants = await ProductVariantsModel.findAll({
-        where: { id: variantIds },
-        include: [
-          {
-            model: ProductModel,
-            as: "product",
-            attributes: ["id", "publication_status"],
-            required: true,
-            where: { publication_status: "published" },
-          },
-        ],
-        attributes: ["id", "stock", "price", "sku"],
-        transaction: t,
-      });
-
-      if (variants.length !== variantIds.length) {
-        const foundIds = variants.map((v) => v.id);
-        const missing = variantIds.filter((id) => !foundIds.includes(id));
+    // Kiểm tra từng biến thể riêng lẻ
+    for (const r of rows) {
+      if (r.variant_quantity > promoQuota) {
         await t.rollback();
         return res.status(400).json({
-          message: `Các biến thể không hợp lệ hoặc thuộc sản phẩm chưa xuất bản: ${missing.join(
-            ", "
-          )}`,
+          message: `Số lượt yêu cầu (${r.variant_quantity}) cho biến thể ${r.product_variant_id} vượt quá quota khuyến mãi (${promoQuota}).`,
+        });
+      }
+    }
+
+    // 3) Validate từng row cơ bản
+    const variantIds = rows.map((r) => r.product_variant_id);
+    if (
+      variantIds.some((id) => !Number.isFinite(id) || id <= 0) ||
+      rows.some((r) => !Number.isFinite(r.variant_quantity) || r.variant_quantity < 0)
+    ) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "ID biến thể phải > 0 và variant_quantity phải ≥ 0.",
+      });
+    }
+
+    // 4) Lấy variants (kèm Product published) + LOCK
+    const variants = await ProductVariantsModel.findAll({
+      where: { id: variantIds },
+      include: [{
+        model: ProductModel,
+        as: "product",
+        attributes: ["id", "publication_status"],
+        required: true,
+        where: { publication_status: "published" },
+      }],
+      attributes: ["id", "stock", "price", "sku"],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (variants.length !== variantIds.length) {
+      const foundIds = variants.map((v) => v.id);
+      const missing = variantIds.filter((id) => !foundIds.includes(id));
+      await t.rollback();
+      return res.status(400).json({
+        message: `Các biến thể không hợp lệ hoặc thuộc sản phẩm chưa xuất bản: ${missing.join(", ")}`,
+      });
+    }
+
+    const vmap = {};
+    variants.forEach((v) => {
+      vmap[v.id] = {
+        stock: Number(v.stock || 0),
+        price: Number.parseFloat(v.price || 0),
+        sku: v.sku || "N/A",
+      };
+    });
+
+    // 5) LOCK toàn bộ rows promotion_products của promotion này
+    await PromotionProductModel.findAll({
+      where: { promotion_id: promoId },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    // 6) Check stock: đã dùng ở KM KHÁC + yêu cầu hiện tại ≤ stock
+    const allocOther = await PromotionProductModel.findAll({
+      where: {
+        product_variant_id: variantIds,
+        promotion_id: { [Sequelize.Op.ne]: promoId },
+      },
+      attributes: [
+        "product_variant_id",
+        [sequelize.fn("SUM", sequelize.col("variant_quantity")), "used_qty"],
+      ],
+      group: ["product_variant_id"],
+      raw: true,
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    const usedByVariantOther = {};
+    allocOther.forEach((r) => {
+      usedByVariantOther[Number(r.product_variant_id)] = Number(r.used_qty) || 0;
+    });
+
+    for (const r of rows) {
+      const vid = r.product_variant_id;
+      const qty = r.variant_quantity;
+      const vinfo = vmap[vid];
+
+      const reqForVariant = rows
+        .filter((x) => x.product_variant_id === vid)
+        .reduce((s, x) => s + (Number(x.variant_quantity) || 0), 0);
+
+      const usedOther = usedByVariantOther[vid] || 0;
+
+      if (usedOther + reqForVariant > vinfo.stock) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Số lượt áp dụng (${reqForVariant}) + đã phân bổ ở KM khác (${usedOther}) vượt tồn kho (${vinfo.stock}) cho SKU ${vinfo.sku}.`,
         });
       }
 
-      // Map id -> info
-      const vm = {};
-      variants.forEach((v) => {
-        vm[v.id] = {
-          stock: Number(v.stock || 0),
-          price: Number.parseFloat(v.price || 0),
-          sku: v.sku || "N/A",
-        };
-      });
-
-      // 4) Validate từng item: tồn kho, finalPrice > 0, min_price_threshold
-      for (const item of products) {
-        const vid = Number(item.product_variant_id);
-        const qty = Number(item.variant_quantity);
-
-        const v = vm[vid];
-        if (!v) {
-          await t.rollback();
-          return res
-            .status(400)
-            .json({ message: `Không tìm thấy biến thể ID ${vid}.` });
-        }
-
-        // 4a) Stock
-        if (qty > v.stock) {
+      if (promo.min_price_threshold != null) {
+        const minThreshold = Number(promo.min_price_threshold);
+        if (Number.isFinite(minThreshold) && vinfo.price < minThreshold) {
           await t.rollback();
           return res.status(400).json({
-            message: `Số lượt áp dụng (${qty}) vượt quá tồn kho (${v.stock}) cho SKU ${v.sku}.`,
+            message: `SKU ${vinfo.sku} có giá (${vinfo.price.toLocaleString("vi-VN")}₫) nhỏ hơn ngưỡng tối thiểu (${minThreshold.toLocaleString("vi-VN")}₫).`,
           });
-        }
-
-        // 4b) min_price_threshold (nếu có)
-        if (promo.min_price_threshold != null) {
-          const minThreshold = Number(promo.min_price_threshold);
-          if (Number.isFinite(minThreshold) && v.price < minThreshold) {
-            await t.rollback();
-            return res.status(400).json({
-              message: `SKU ${v.sku} có giá (${v.price.toLocaleString(
-                "vi-VN"
-              )}₫) nhỏ hơn ngưỡng tối thiểu (${minThreshold.toLocaleString(
-                "vi-VN"
-              )}₫).`,
-            });
-          }
-        }
-
-        // 4c) finalPrice > 0 theo loại discount
-        if (promo.discount_type === "percentage") {
-          const finalPrice =
-            v.price * (1 - Number(promo.discount_value || 0) / 100);
-          if (finalPrice <= 0) {
-            await t.rollback();
-            return res.status(400).json({
-              message: `Sau khi giảm ${promo.discount_value}% biến thể SKU ${v.sku} có giá <= 0.`,
-            });
-          }
-        } else if (promo.discount_type === "fixed") {
-          const finalPrice = v.price - Number(promo.discount_value || 0);
-          if (finalPrice <= 0) {
-            await t.rollback();
-            return res.status(400).json({
-              message: `Giảm cố định ${promo.discount_value}₫ làm SKU ${v.sku} có giá <= 0.`,
-            });
-          }
         }
       }
 
-      // 5) Cập nhật promotion_products: xóa hết & tạo mới
-      await PromotionProductModel.destroy({
-        where: { promotion_id },
-        transaction: t,
-      });
-
-      await PromotionProductModel.bulkCreate(
-        products.map((item) => ({
-          promotion_id,
-          product_variant_id: Number(item.product_variant_id),
-          variant_quantity: Number(item.variant_quantity),
-        })),
-        { transaction: t }
-      );
-
-      await t.commit();
-
-      return res.status(200).json({
-        message: "Cập nhật khuyến mãi thành công!",
-        totalApplied: products.length,
-      });
-    } catch (err) {
-      await t.rollback();
-      console.error("Lỗi khi cập nhật khuyến mãi:", err);
-      return res.status(500).json({ message: err.message || "Có lỗi xảy ra." });
+      if (promo.discount_type === "percentage") {
+        const finalPrice = vinfo.price * (1 - Number(promo.discount_value || 0) / 100);
+        if (finalPrice <= 0) {
+          await t.rollback();
+          return res.status(400).json({
+            message: `Sau khi giảm ${promo.discount_value}% biến thể SKU ${vinfo.sku} có giá <= 0.`,
+          });
+        }
+      } else if (promo.discount_type === "fixed") {
+        const finalPrice = vinfo.price - Number(promo.discount_value || 0);
+        if (finalPrice <= 0) {
+          await t.rollback();
+          return res.status(400).json({
+            message: `Giảm cố định ${promo.discount_value}₫ làm SKU ${vinfo.sku} có giá <= 0.`,
+          });
+        }
+      }
     }
+
+    // 7) Ghi DB: xóa cũ, tạo mới
+    await PromotionProductModel.destroy({
+      where: { promotion_id: promoId },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    await PromotionProductModel.bulkCreate(rows, { transaction: t });
+
+    // ✅ LỚP AN TOÀN #3: kiểm tra lại sau khi ghi
+    const afterSumRow = await PromotionProductModel.findOne({
+      where: { promotion_id: promoId },
+      attributes: [
+        [sequelize.fn("SUM", sequelize.col("variant_quantity")), "total_qty"],
+      ],
+      raw: true,
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    const afterSum = Number(afterSumRow?.total_qty || 0);
+    if (afterSum > promoQuota) {
+      await t.rollback();
+      return res.status(409).json({
+        message: `Tổng số lượt sau cập nhật (${afterSum}) vượt quá quota (${promoQuota}). Đã hủy thay đổi.`,
+      });
+    }
+
+    await t.commit();
+    return res.status(200).json({
+      message: "Cập nhật khuyến mãi thành công!",
+      totalApplied: rows.length,
+      totalRequested,
+      quota: promoQuota,
+      remaining: Math.max(0, promoQuota - afterSum),
+    });
+  } catch (err) {
+    await t.rollback();
+    console.error("Lỗi khi cập nhật khuyến mãi:", err);
+    return res.status(500).json({ message: err.message || "Có lỗi xảy ra." });
   }
+}
+
+
 
   static async delete(req, res) {
     const { id } = req.params;
