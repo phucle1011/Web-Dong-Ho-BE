@@ -11,6 +11,8 @@ const Attribute = require('../../models/productAttributesModel');
 const PromoProd = require('../../models/promotionProductsModel');
 const Promotion = require('../../models/promotionsModel');
 const ProductModel = require('../../models/productsModel');
+const OrderDetail = require('../../models/orderDetailsModel');
+const Comment = require('../../models/commentsModel');
 
 const NON_AUCTION_WHERE = { is_auction_only: 0 };
 
@@ -290,13 +292,90 @@ class SearchController {
         return matchB - matchA;
       });
 
+      // === ⭐ TÍNH SAO/ĐÁNH GIÁ CHO VARIANT & SẢN PHẨM ===
+      const allVariantIds = sortedProducts.flatMap(p => (p.variants || []).map(v => v.id));
+      let ratingMap = {};
+      if (allVariantIds.length > 0) {
+        const ratingRows = await Comment.findAll({
+          where: { parent_id: null },
+          include: [{
+            model: OrderDetail,
+            as: 'orderDetail',
+            attributes: ['product_variant_id'],
+            where: { product_variant_id: { [Op.in]: allVariantIds } },
+            required: true,
+          }],
+          attributes: [
+            [Sequelize.col('orderDetail.product_variant_id'), 'variantId'],
+            [Sequelize.fn('AVG', Sequelize.col('rating')), 'avgRating'],
+            [Sequelize.fn('COUNT', Sequelize.col('rating')), 'ratingCount'],
+          ],
+          group: ['orderDetail.product_variant_id'],
+          raw: true,
+        });
+
+        ratingMap = ratingRows.reduce((acc, r) => {
+          acc[r.variantId] = {
+            avgRating: Number(parseFloat(r.avgRating || 0).toFixed(1)),
+            ratingCount: parseInt(r.ratingCount || 0, 10),
+          };
+          return acc;
+        }, {});
+      }
+
+
       const data = sortedProducts.map(p => {
         // Sắp xếp variants: còn hàng lên trước
-        const sortedVariants = [...p.variants].sort((a, b) => {
+        const sortedVariants = [...(p.variants || [])].sort((a, b) => {
           if (a.stock > 0 && b.stock === 0) return -1;
           if (a.stock === 0 && b.stock > 0) return 1;
-          return b.stock - a.stock; // ưu tiên stock cao hơn
+          return (b.stock || 0) - (a.stock || 0);
         });
+
+        // Tính rating cấp sản phẩm từ rating của các variant (có trọng số)
+        let sumWeighted = 0;
+        let sumCount = 0;
+
+        const variantsPayload = sortedVariants.map(v => {
+          const promo = v.promotionProducts?.[0]?.promotion;
+          let finalPrice = parseFloat(v.price);
+          if (promo) {
+            finalPrice = promo.discount_type === 'percentage'
+              ? finalPrice * (1 - parseFloat(promo.discount_value) / 100)
+              : finalPrice - parseFloat(promo.discount_value);
+          }
+
+          const r = ratingMap[v.id] || { avgRating: 0, ratingCount: 0 };
+          sumWeighted += r.avgRating * r.ratingCount;
+          sumCount += r.ratingCount;
+
+          return {
+            id: v.id,
+            sku: v.sku,
+            price: parseFloat(v.price),
+            final_price: Math.max(finalPrice, 0),
+            stock: v.stock,
+            images: (v.images || []).map(i => ({ id: i.id, image_url: toUrl(i.image_url, req) })),
+            attributes: (v.attributeValues || []).map(av => ({
+              id: av.attribute.id,
+              name: av.attribute.name,
+              value: av.value
+            })),
+            // ⭐ Gắn rating cho biến thể
+            averageRating: r.avgRating,
+            ratingCount: r.ratingCount,
+            promotion: promo ? {
+              id: promo.id,
+              code: promo.code,
+              type: promo.discount_type,
+              value: parseFloat(promo.discount_value)
+            } : null
+          };
+        });
+
+        // ⭐ Rating cấp sản phẩm (nếu có dữ liệu)
+        const productAvg = sumCount > 0 ? Number((sumWeighted / sumCount).toFixed(1)) : 0;
+        const productCnt = sumCount;
 
         return {
           id: p.id,
@@ -306,36 +385,13 @@ class SearchController {
           thumbnail: toUrl(p.thumbnail, req),
           brand: p.brand?.name,
           category: p.category?.name,
-          variants: sortedVariants.map(v => {
-            const promo = v.promotionProducts?.[0]?.promotion;
-            let finalPrice = parseFloat(v.price);
-            if (promo) {
-              finalPrice = promo.discount_type === 'percentage'
-                ? finalPrice * (1 - parseFloat(promo.discount_value) / 100)
-                : finalPrice - parseFloat(promo.discount_value);
-            }
-            return {
-              id: v.id,
-              sku: v.sku,
-              price: parseFloat(v.price),
-              final_price: Math.max(finalPrice, 0),
-              stock: v.stock, // ✅ Đảm bảo frontend nhận được stock
-              images: (v.images || []).map(i => ({ id: i.id, image_url: toUrl(i.image_url, req) })),
-              attributes: (v.attributeValues || []).map(av => ({
-                id: av.attribute.id,
-                name: av.attribute.name,
-                value: av.value
-              })),
-              promotion: promo ? {
-                id: promo.id,
-                code: promo.code,
-                type: promo.discount_type,
-                value: parseFloat(promo.discount_value)
-              } : null
-            };
-          })
+          // ⭐ Gắn rating cấp sản phẩm
+          averageRating: productAvg,
+          ratingCount: productCnt,
+          variants: variantsPayload,
         };
       });
+
 
       return res.json({
         status: 200,
