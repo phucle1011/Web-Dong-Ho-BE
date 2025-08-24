@@ -695,19 +695,18 @@ class OrderController {
                     }
                 }
 // === TÍNH GIÁ VÀ CỘNG TỔNG ===
-const unitPrice = Number(variant.price) || 0;                         // giá gốc / 1 sp
-const promoUnitPriceFromFE = Number(item.amount);                     // đơn giá KM FE gửi
-const promoQty = Number(promotionAppliedQty) || 0;                    // SL áp dụng KM
-const normalQty = Math.max(0, Number(item.quantity) - promoQty);      // SL còn lại tính giá gốc
+const unitPrice = Number(productVariant.price) || 0; // giá gốc từ DB
+const promoUnitPrice = Number(variant.price) || unitPrice; // giá KM từ FE nếu có
+const promoQty = Number(promotionAppliedQty) || 0;
+const normalQty = Math.max(0, Number(item.quantity) - promoQty);
 
-// Nếu FE không gửi amount hợp lệ, fallback về giá gốc
-const promoUnitPrice = (Number.isFinite(promoUnitPriceFromFE) && promoUnitPriceFromFE >= 0)
-  ? promoUnitPriceFromFE
-  : unitPrice;
-
-// Tổng tiền dòng: phần KM + phần giá thường
+// Tổng tiền dòng
 const lineTotal = (promoQty * promoUnitPrice) + (normalQty * unitPrice);
 totalPrice += lineTotal;
+
+
+
+
                 // Push chi tiết (giữ key cũ + bổ sung trường để theo dõi minh bạch)
 detailedCart.push({
   variant: variant.id,
@@ -1904,33 +1903,18 @@ detailedCart.push({
 
             `${process.env.FRONTEND_URL}/cart`
         } catch (error) {
-  // Luôn có orderId để bám logs
-  const orderId = req.query?.vnp_TxnRef || "unknown";
-
-  // Gắn mã theo dõi đơn giản
-  const errCode = `${error?.name || "Error"}:${(error?.message || "").slice(0,60)}`;
-
-  console.error("==== [VNPAY CALLBACK ERROR] ====");
-  console.error("orderId:", orderId);
-  console.error("name   :", error?.name);
-  console.error("message:", error?.message);
-  console.error("stack  :", error?.stack);
-  console.error("===============================");
-
-  // Nếu transaction chưa commit thì rollback an toàn
-  if (t && t.finished !== "commit") {
-    try {
-      await t.rollback();
-    } catch (rbErr) {
-      console.error("[VNPAY] Rollback error:", rbErr);
-    }
-  }
-
-  // Đẩy thêm code ra FE để lần sau nhìn URL biết nhóm lỗi nào
-  return res.redirect(
-    `${process.env.FRONTEND_URL}/payment/failed?error=Server_error&code=${encodeURIComponent(errCode)}&orderId=${orderId}`
-  );
-}
+    if (t && t.finished !== "commit") {
+                try {
+                    await t.rollback();
+                } catch (rbErr) {
+                    console.error("Rollback error:", rbErr);
+                }
+            }
+            const orderId = req.query.vnp_TxnRef || "unknown";
+            return res.redirect(
+                `${process.env.FRONTEND_URL}/payment/failed?error=Server_error&orderId=${orderId}`
+            );
+        }
     }
 
     static async sendOrderConfirmationEmail(
